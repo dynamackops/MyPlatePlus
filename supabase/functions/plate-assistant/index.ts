@@ -61,8 +61,8 @@ Deno.serve(async (request) => {
       }),
     })
     if (!response.ok) throw new Error(`Provider returned ${response.status}`)
-    const body = await response.json()
-    const text = body.output_text ?? body.output?.flatMap((item: any) => item.content ?? []).find((part: any) => part.type === 'output_text')?.text
+    const body = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }> }
+    const text = body.output_text ?? body.output?.flatMap((item) => item.content ?? []).find((part) => part.type === 'output_text')?.text
     if (typeof text !== 'string') throw new Error('No structured output')
     return json(JSON.parse(text))
   } catch (error) {
@@ -70,4 +70,3 @@ Deno.serve(async (request) => {
     return json({ error: 'The assistant is unavailable. Nothing was changed or shared.' }, 503)
   }
 })
-
