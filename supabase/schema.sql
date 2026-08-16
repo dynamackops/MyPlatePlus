@@ -108,6 +108,11 @@ create index pass_requests_circle_status_idx on public.pass_requests (circle_id,
 create index pass_requests_recipient_idx on public.pass_requests (recipient_id, status) where recipient_id is not null;
 create index shared_responsibilities_circle_idx on public.shared_responsibilities (circle_id, status);
 create index sharing_audit_actor_idx on public.sharing_audit (actor_id, created_at desc);
+create index circles_owner_idx on public.circles (owner_id);
+create index pass_requests_sender_idx on public.pass_requests (sender_id);
+create index pass_requests_source_item_idx on public.pass_requests (source_item_id) where source_item_id is not null;
+create index shared_responsibilities_created_by_idx on public.shared_responsibilities (created_by);
+create index sharing_audit_circle_idx on public.sharing_audit (circle_id);
 
 alter table public.profiles enable row level security;
 alter table public.circles enable row level security;
@@ -119,6 +124,12 @@ alter table public.shared_responsibilities enable row level security;
 alter table public.sharing_audit enable row level security;
 
 -- New Supabase projects no longer expose public tables automatically.
+revoke all privileges on all tables in schema public from anon;
+revoke all privileges on all sequences in schema public from anon;
+revoke execute on all functions in schema public from anon;
+alter default privileges in schema public revoke all on tables from anon;
+alter default privileges in schema public revoke all on sequences from anon;
+alter default privileges in schema public revoke execute on functions from anon;
 grant usage on schema public to authenticated;
 grant select, insert, update, delete on public.profiles to authenticated;
 grant select, insert, update, delete on public.circles to authenticated;
@@ -149,14 +160,15 @@ $$;
 revoke all on function private.is_circle_member(uuid) from public, anon;
 grant execute on function private.is_circle_member(uuid) to authenticated;
 
-create policy "profiles own select" on public.profiles for select to authenticated
-using ((select auth.uid()) = id);
-create policy "profiles circle peers select" on public.profiles for select to authenticated
-using (exists (
-  select 1 from public.circle_members mine
-  join public.circle_members theirs on theirs.circle_id = mine.circle_id
-  where mine.user_id = (select auth.uid()) and theirs.user_id = profiles.id
-));
+create policy "profiles self or circle peers select" on public.profiles for select to authenticated
+using (
+  (select auth.uid()) = id
+  or exists (
+    select 1 from public.circle_members mine
+    join public.circle_members theirs on theirs.circle_id = mine.circle_id
+    where mine.user_id = (select auth.uid()) and theirs.user_id = profiles.id
+  )
+);
 create policy "profiles own insert" on public.profiles for insert to authenticated
 with check ((select auth.uid()) = id);
 create policy "profiles own update" on public.profiles for update to authenticated
@@ -196,13 +208,21 @@ using (owner_id = (select auth.uid())) with check (owner_id = (select auth.uid()
 create policy "plate owners delete" on public.plate_items for delete to authenticated
 using (owner_id = (select auth.uid()));
 
-create policy "circle reads approved requests" on public.pass_requests for select to authenticated
-using (private.is_circle_member(circle_id));
+create policy "participants read approved requests" on public.pass_requests for select to authenticated
+using (
+  sender_id = (select auth.uid())
+  or recipient_id = (select auth.uid())
+  or (recipient_id is null and private.is_circle_member(circle_id))
+);
 create policy "members create own requests" on public.pass_requests for insert to authenticated
-with check (sender_id = (select auth.uid()) and private.is_circle_member(circle_id));
-create policy "participants update request" on public.pass_requests for update to authenticated
-using (sender_id = (select auth.uid()) or recipient_id = (select auth.uid()))
-with check (sender_id = (select auth.uid()) or recipient_id = (select auth.uid()));
+with check (
+  sender_id = (select auth.uid())
+  and private.is_circle_member(circle_id)
+  and (
+    recipient_id is null
+    or exists (select 1 from public.circle_members recipient where recipient.circle_id = pass_requests.circle_id and recipient.user_id = pass_requests.recipient_id)
+  )
+);
 
 create policy "circle reads shared responsibilities" on public.shared_responsibilities for select to authenticated
 using (private.is_circle_member(circle_id));
@@ -223,17 +243,52 @@ security definer
 set search_path = ''
 as $$
 declare target_id uuid;
+declare joined_count integer;
 begin
   if (select auth.uid()) is null then raise exception 'Authentication required'; end if;
-  select id into target_id from public.circles where invite_code = code;
+  select id into target_id from public.circles where lower(invite_code) = lower(trim(code));
   if target_id is null then raise exception 'Invalid invite code'; end if;
   insert into public.circle_members (circle_id, user_id, role)
   values (target_id, (select auth.uid()), 'member') on conflict do nothing;
+  get diagnostics joined_count = row_count;
+  if joined_count > 0 then
+    insert into public.sharing_audit (actor_id, circle_id, action)
+    values ((select auth.uid()), target_id, 'member_joined');
+  end if;
   return target_id;
 end;
 $$;
 revoke all on function public.join_circle_by_code(text) from public, anon;
 grant execute on function public.join_circle_by_code(text) to authenticated;
+
+create or replace function public.respond_to_pass_request(request_id uuid, decision public.request_status)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare target public.pass_requests%rowtype;
+begin
+  if (select auth.uid()) is null then raise exception 'Authentication required'; end if;
+  if decision not in ('accepted', 'declined') then raise exception 'Unsupported response'; end if;
+
+  select * into target from public.pass_requests where id = request_id for update;
+  if target.id is null or target.status <> 'open' then raise exception 'Request is no longer open'; end if;
+  if target.sender_id = (select auth.uid()) then raise exception 'Senders cannot answer their own request'; end if;
+  if target.recipient_id is not null and target.recipient_id <> (select auth.uid()) then raise exception 'This request belongs to another recipient'; end if;
+  if target.recipient_id is null and not private.is_circle_member(target.circle_id) then raise exception 'Circle membership required'; end if;
+
+  update public.pass_requests
+  set status = decision, recipient_id = coalesce(target.recipient_id, (select auth.uid())), responded_at = now()
+  where id = request_id;
+
+  insert into public.sharing_audit (actor_id, circle_id, action, resource_id)
+  values ((select auth.uid()), target.circle_id, 'request_updated', request_id);
+  return request_id;
+end;
+$$;
+revoke all on function public.respond_to_pass_request(uuid, public.request_status) from public, anon;
+grant execute on function public.respond_to_pass_request(uuid, public.request_status) to authenticated;
 
 create or replace function public.handle_new_user()
 returns trigger
@@ -241,9 +296,18 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare new_circle_id uuid;
 begin
   insert into public.profiles (id, display_name)
   values (new.id, coalesce(nullif(new.raw_user_meta_data ->> 'display_name', ''), split_part(new.email, '@', 1)));
+
+  insert into public.circles (owner_id, name)
+  values (new.id, 'My Trusted Circle')
+  returning id into new_circle_id;
+
+  insert into public.circle_members (circle_id, user_id, role)
+  values (new_circle_id, new.id, 'owner');
+
   return new;
 end;
 $$;
@@ -256,4 +320,3 @@ for each row execute function public.handle_new_user();
 -- Realtime: pass requests are the only table enabled by default.
 -- Personal plate and check-in changes remain outside the shared stream.
 alter publication supabase_realtime add table public.pass_requests;
-
