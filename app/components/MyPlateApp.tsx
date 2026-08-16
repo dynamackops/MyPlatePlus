@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  ArrowRight, Bell, Brain, Check, ChevronLeft, ChevronRight, CircleUserRound, Clock3,
+  ArrowRight, Bell, Brain, CalendarDays, Check, ChevronLeft, ChevronRight, CircleUserRound, Clock3, Download,
   HandHeart, HeartHandshake, Inbox, Lightbulb, LockKeyhole, LogOut, Menu,
   Maximize2, Mic, Pencil, Plus, RefreshCcw, Search, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Users, WandSparkles, X,
 } from 'lucide-react'
@@ -87,8 +87,9 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
   const [circles, setCircles] = useState<CircleSummary[]>([])
   const [members, setMembers] = useState<CircleMember[]>([])
   const [checkinHistory, setCheckinHistory] = useState<Array<CapacityCheckin & { checkedInOn: string; availablePoints: number }>>([])
-  const [modal, setModal] = useState<'none' | 'setup' | 'profile' | 'checkin' | 'brain' | 'room' | 'pass' | 'add' | 'edit' | 'delete' | 'invite' | 'settings' | 'focus'>('none')
+  const [modal, setModal] = useState<'none' | 'setup' | 'profile' | 'checkin' | 'brain' | 'room' | 'pass' | 'add' | 'edit' | 'delete' | 'invite' | 'settings' | 'focus' | 'calendar'>('none')
   const [selectedItem, setSelectedItem] = useState<PlateItem | null>(null)
+  const [calendarSelection, setCalendarSelection] = useState<{ items: PlateItem[]; label: string }>({ items: [], label: 'My plate' })
   const [mobileNav, setMobileNav] = useState(false)
   const [notice, setNotice] = useState('')
   const [preferences, setPreferences] = useState<PlatePreferences>(readPreferences)
@@ -399,7 +400,7 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
 
       <main id="main" className="main-content">
         {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={15} /></button></div>}
-        {view === 'plate' && <PlateView name={profile.displayName} items={items} capacity={capacity} used={used} percent={percent} fullness={fullness} preferences={preferences} onCheckin={() => setModal('checkin')} onBrain={() => setModal('brain')} onAdd={() => setModal('add')} onRoom={() => setModal('room')} onFocus={() => setModal('focus')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onPass={(item) => { setSelectedItem(item); setModal('pass') }} onComplete={(item) => void setItemStatus(item, 'complete')} onSide={(item) => void setItemStatus(item, 'side-plate')} onRestore={(item) => void setItemStatus(item, 'active')} />}
+        {view === 'plate' && <PlateView name={profile.displayName} items={items} capacity={capacity} used={used} percent={percent} fullness={fullness} preferences={preferences} onCheckin={() => setModal('checkin')} onBrain={() => setModal('brain')} onAdd={() => setModal('add')} onRoom={() => setModal('room')} onFocus={() => setModal('focus')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onPass={(item) => { setSelectedItem(item); setModal('pass') }} onCalendar={(nextItems, label) => { setCalendarSelection({ items: nextItems, label }); setModal('calendar') }} onComplete={(item) => void setItemStatus(item, 'complete')} onSide={(item) => void setItemStatus(item, 'side-plate')} onRestore={(item) => void setItemStatus(item, 'active')} />}
         {view === 'table' && <TableView isDemo={mode === 'demo'} profile={profile} circle={circle} circles={circles} members={members} onCircleChange={switchCircle} onInvite={() => setModal('invite')} onRequest={() => { const item = items.find((i) => i.status === 'active'); if (item) { setSelectedItem(item); setModal('pass') } else setModal('add') }} />}
         {view === 'requests' && <RequestsView requests={requests} members={members} userId={profile.id} onUpdate={respondToRequest} />}
         {view === 'insights' && <InsightsView isDemo={mode === 'demo'} items={items} history={checkinHistory} requests={requests} />}
@@ -418,6 +419,7 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
       {modal === 'pass' && selectedItem && <PassModal item={selectedItem} members={members.filter((member) => member.id !== profile.id)} onInvite={() => setModal('invite')} onSend={sendPass} onClose={() => { setSelectedItem(null); setModal('none') }} />}
       {modal === 'settings' && <SettingsModal value={preferences} onSave={(next) => { setPreferences(next); setModal('none'); setNotice('Plate preferences saved on this device.') }} onClose={() => setModal('none')} />}
       {modal === 'focus' && <FocusDisplay items={items} capacity={capacity} used={used} percent={percent} onAdd={() => setModal('add')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onComplete={(item) => void setItemStatus(item, 'complete')} onClose={() => setModal('none')} />}
+      {modal === 'calendar' && <CalendarExportModal items={calendarSelection.items} label={calendarSelection.label} categoryLabels={preferences.categoryLabels} onClose={() => setModal('none')} />}
     </div>
   )
 }
@@ -433,13 +435,39 @@ function formatDueDate(value?: string) {
   return parsed.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
+function calendarDate(value: string, daysToAdd = 0) {
+  const date = new Date(`${value}T12:00:00`)
+  date.setDate(date.getDate() + daysToAdd)
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+}
+
+function escapeCalendarText(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;')
+}
+
+function buildCalendarFile(items: PlateItem[], categoryLabels: PlatePreferences['categoryLabels']) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
+  const events = items.filter((item) => item.due).map((item) => [
+    'BEGIN:VEVENT',
+    `UID:myplate-${item.id}@myplate-plus`,
+    `DTSTAMP:${stamp}`,
+    `DTSTART;VALUE=DATE:${calendarDate(item.due!)}`,
+    `DTEND;VALUE=DATE:${calendarDate(item.due!, 1)}`,
+    `SUMMARY:${escapeCalendarText(item.title)}`,
+    `DESCRIPTION:${escapeCalendarText(`${categoryLabels[item.category]} · ${item.points} capacity points · Added with MyPlate+`)}`,
+    'TRANSP:TRANSPARENT',
+    'END:VEVENT',
+  ].join('\r\n'))
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//MyPlate+//Weekly Capacity Calendar//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:MyPlate+', ...events, 'END:VCALENDAR'].join('\r\n')
+}
+
 function NavButton({ active, icon, label, badge, onClick }: { active: boolean; icon: React.ReactNode; label: string; badge?: number; onClick: () => void }) {
   return <button className={`nav-button ${active ? 'active' : ''}`} onClick={onClick}>{icon}<span>{label}</span>{badge ? <b className="nav-badge">{badge}</b> : null}</button>
 }
 
-function PlateView({ name, items, capacity, used, percent, fullness, preferences, onCheckin, onBrain, onAdd, onRoom, onFocus, onEdit, onPass, onComplete, onSide, onRestore }: {
+function PlateView({ name, items, capacity, used, percent, fullness, preferences, onCheckin, onBrain, onAdd, onRoom, onFocus, onEdit, onPass, onCalendar, onComplete, onSide, onRestore }: {
   name: string; items: PlateItem[]; capacity: number; used: number; percent: number; fullness: { label: string; message: string }; preferences: PlatePreferences;
-  onCheckin: () => void; onBrain: () => void; onAdd: () => void; onRoom: () => void; onFocus: () => void; onEdit: (item: PlateItem) => void; onPass: (item: PlateItem) => void; onComplete: (item: PlateItem) => void; onSide: (item: PlateItem) => void; onRestore: (item: PlateItem) => void
+  onCheckin: () => void; onBrain: () => void; onAdd: () => void; onRoom: () => void; onFocus: () => void; onEdit: (item: PlateItem) => void; onPass: (item: PlateItem) => void; onCalendar: (items: PlateItem[], label: string) => void; onComplete: (item: PlateItem) => void; onSide: (item: PlateItem) => void; onRestore: (item: PlateItem) => void
 }) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [category, setCategory] = useState<'all' | PlateItem['category']>('all')
@@ -481,7 +509,7 @@ function PlateView({ name, items, capacity, used, percent, fullness, preferences
     </section>
     <div className="plate-tools">
       <div className="week-picker"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><ChevronLeft /></button><span><b>Weekly plate</b><small>{weekLabel}</small></span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><ChevronRight /></button></div>
-      <div className="category-tabs" aria-label="Filter commitments by category">{categories.map((value) => <button key={value} className={category === value ? 'active' : ''} onClick={() => setCategory(value)}>{value === 'all' ? 'All' : preferences.categoryLabels[value]} <span>{items.filter((item) => inWeek(item) && (value === 'all' || item.category === value)).length}</span></button>)}</div>
+      <div className="plate-tool-actions"><button className="calendar-sync-button" onClick={() => onCalendar(weekItems.filter((item) => item.due && (item.status === 'active' || item.status === 'waiting')), `Weekly plate · ${weekLabel}`)}><CalendarDays size={17} /> Sync this week</button><div className="category-tabs" aria-label="Filter commitments by category">{categories.map((value) => <button key={value} className={category === value ? 'active' : ''} onClick={() => setCategory(value)}>{value === 'all' ? 'All' : preferences.categoryLabels[value]} <span>{items.filter((item) => inWeek(item) && (value === 'all' || item.category === value)).length}</span></button>)}</div></div>
     </div>
     <section className="week-calendar" aria-label={`Dates for ${weekLabel}`}>
       <button className={selectedDay === 'all' ? 'active' : ''} onClick={() => setSelectedDay('all')}><b>All week</b><small>{weekItems.filter((item) => item.status !== 'complete').length} planned</small></button>
@@ -509,7 +537,7 @@ function PlateView({ name, items, capacity, used, percent, fullness, preferences
         <div className="section-title"><div><p className="eyebrow">{selectedDay === 'all' ? 'WEEKLY LIST' : formatDueDate(selectedDay).toUpperCase()}</p><h2>{lane === 'plate' ? 'Your commitments' : lane === 'side' ? 'Side Plate' : 'Completed'} <small>{laneItems.length}</small></h2></div><button className="small-add" aria-label="Add commitment" onClick={onAdd}><Plus /></button></div>
         <div className="list-tools compact-tools"><label><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find an item" aria-label="Find an item" /></label><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="Sort commitments"><option value="due">Due date</option><option value="points">Capacity</option><option value="title">Title</option></select></div>
         {lane === 'side' && <p className="lane-note"><Clock3 size={15} /> Side Plate holds things you still care about without counting them toward today’s active load.</p>}
-        <div className="item-list">{laneItems.map((item) => <div className="item-row" key={item.id}><span className="item-color" style={{ background: categoryColor[item.category] }} /><span className="row-icon" aria-hidden="true">{item.icon || '·'}</span><button className="item-summary" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`}><b>{item.title}</b><small>{preferences.categoryLabels[item.category]} · {item.points} pts · {formatDueDate(item.due)}{item.status === 'waiting' ? ' · waiting on support' : ''}{item.steps?.length ? ` · ${item.steps.length} steps` : ''}</small></button><div className="item-actions">{lane === 'plate' && <><button className="done-button" onClick={() => onComplete(item)} aria-label={`Mark ${item.title} done`} title="Mark done"><Check size={15} /> Done</button><button className="icon-button subtle" onClick={() => onSide(item)} aria-label={`Move ${item.title} to Side Plate`} title="Move to Side Plate"><Clock3 /></button><button className="icon-button subtle" onClick={() => onPass(item)} aria-label={`Pass ${item.title}`} title="Pass the Plate"><HandHeart /></button></>}{lane !== 'plate' && <button className="restore-button" onClick={() => onRestore(item)}><RefreshCcw size={14} /> Return to plate</button>}<button className="icon-button subtle" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`} title="Edit"><Pencil /></button></div></div>)}</div>
+        <div className="item-list">{laneItems.map((item) => <div className="item-row" key={item.id}><span className="item-color" style={{ background: categoryColor[item.category] }} /><span className="row-icon" aria-hidden="true">{item.icon || '·'}</span><button className="item-summary" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`}><b>{item.title}</b><small>{preferences.categoryLabels[item.category]} · {item.points} pts · {formatDueDate(item.due)}{item.status === 'waiting' ? ' · waiting on support' : ''}{item.steps?.length ? ` · ${item.steps.length} steps` : ''}</small></button><div className="item-actions">{lane === 'plate' && <><button className="done-button" onClick={() => onComplete(item)} aria-label={`Mark ${item.title} done`} title="Mark done"><Check size={15} /> Done</button>{item.due && <button className="icon-button subtle" onClick={() => onCalendar([item], item.title)} aria-label={`Add ${item.title} to a calendar`} title="Add to calendar"><CalendarDays /></button>}<button className="icon-button subtle" onClick={() => onSide(item)} aria-label={`Move ${item.title} to Side Plate`} title="Move to Side Plate"><Clock3 /></button><button className="icon-button subtle" onClick={() => onPass(item)} aria-label={`Pass ${item.title}`} title="Pass the Plate"><HandHeart /></button></>}{lane !== 'plate' && <button className="restore-button" onClick={() => onRestore(item)}><RefreshCcw size={14} /> Return to plate</button>}<button className="icon-button subtle" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`} title="Edit"><Pencil /></button></div></div>)}</div>
         {laneItems.length === 0 && <div className="empty-list"><p>{lane === 'side' ? 'Your Side Plate is clear. Move something here when it matters—but not right now.' : lane === 'complete' ? 'Nothing is marked complete for this view yet.' : 'No commitments match this date and category.'}</p>{lane === 'plate' && <button className="secondary-button full" onClick={onAdd}><Plus size={17} /> Add a commitment</button>}</div>}
         <p className="category-guide"><SlidersHorizontal size={14} /> Category guide: {category === 'all' ? capacity : preferences.categoryLimits[category]} points</p>
       </aside>
@@ -657,6 +685,37 @@ function EditItemModal({ item, categoryLabels, onSave, onDelete, onClose }: { it
     setSaving(false)
   }
   return <Modal title="Edit commitment" onClose={discard} wide><p className="eyebrow">YOUR PLATE CAN CHANGE</p><h2>Edit this commitment.</h2><ItemFields draft={draft} setDraft={setDraft} categoryLabels={categoryLabels} /><div className="modal-footer edit-footer"><button className="danger-button" onClick={onDelete}><Trash2 size={17} /> Delete</button><div><button className="secondary-button" onClick={discard}>Cancel</button><button className="primary-button" disabled={saving || !draft.title.trim() || draft.loads.length === 0} onClick={() => void save()}>{saving ? 'Saving…' : 'Save changes'}</button></div></div></Modal>
+}
+
+function CalendarExportModal({ items, label, categoryLabels, onClose }: { items: PlateItem[]; label: string; categoryLabels: PlatePreferences['categoryLabels']; onClose: () => void }) {
+  const eligible = items.filter((item) => item.due && item.status !== 'side-plate' && item.status !== 'complete')
+  const [selected, setSelected] = useState(() => eligible.map((item) => item.id))
+  const approved = eligible.filter((item) => selected.includes(item.id))
+  function toggle(id: string) { setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]) }
+  function downloadCalendar() {
+    if (!approved.length) return
+    const blob = new Blob([buildCalendarFile(approved, categoryLabels)], { type: 'text/calendar;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `myplate-${new Date().toISOString().slice(0, 10)}.ics`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  }
+  function addToGoogle(item: PlateItem) {
+    if (!item.due) return
+    const details = `${categoryLabels[item.category]} · ${item.points} capacity points · Added with MyPlate+`
+    const params = new URLSearchParams({ action: 'TEMPLATE', text: item.title, dates: `${calendarDate(item.due)}/${calendarDate(item.due, 1)}`, details })
+    window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, '_blank', 'noopener,noreferrer')
+  }
+  return <Modal title="Calendar preview" onClose={onClose} wide><p className="eyebrow">APPROVAL BEFORE EXPORT</p><h2>Bring your plate into your calendar.</h2><p className="modal-intro">{label}. Only the checked titles, dates, categories, and capacity points leave MyPlate+. Private descriptions and steps never do.</p>
+    <div className="calendar-privacy"><ShieldCheck size={19} /><span><b>Minimal by design</b><small>Side Plate and completed items stay out. You can uncheck anything before exporting.</small></span></div>
+    {eligible.length ? <div className="calendar-preview-list">{eligible.map((item) => <label key={item.id} className={selected.includes(item.id) ? 'selected' : ''}><input type="checkbox" checked={selected.includes(item.id)} onChange={() => toggle(item.id)} /><span className="calendar-item-icon">{item.icon || '📅'}</span><span><b>{item.title}</b><small>{formatDueDate(item.due)} · {categoryLabels[item.category]} · {item.points} pts</small></span>{eligible.length === 1 && <button type="button" className="google-calendar-button" onClick={(event) => { event.preventDefault(); addToGoogle(item) }}>Google Calendar <ArrowRight size={15} /></button>}</label>)}</div> : <div className="calendar-empty"><CalendarDays /><h3>Nothing dated is ready to export.</h3><p>Add a due date to an active commitment first. Side Plate items wait until you return them to your plate.</p></div>}
+    <div className="calendar-destinations"><span><b>Works with your calendar</b><small>Open the downloaded file with Apple Calendar or Outlook, or import it into Google Calendar.</small></span><span className="calendar-apps"><i>G</i><i></i><i>O</i></span></div>
+    <div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Not now</button><button className="primary-button" disabled={!approved.length} onClick={downloadCalendar}><Download size={17} /> Export {approved.length === 1 ? 'commitment' : `${approved.length} commitments`}</button></div>
+  </Modal>
 }
 
 function SettingsModal({ value, onSave, onClose }: { value: PlatePreferences; onSave: (value: PlatePreferences) => void; onClose: () => void }) {
