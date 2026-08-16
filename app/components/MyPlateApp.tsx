@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   ArrowRight, Bell, Brain, Check, ChevronRight, CircleUserRound, Clock3,
   HandHeart, HeartHandshake, Inbox, Lightbulb, LockKeyhole, LogOut, Menu,
@@ -9,7 +10,7 @@ import {
 import { AuthGate } from './AuthGate'
 import { demoCircle, defaultCheckin, demoItems, demoProfile, demoRequests } from '../lib/demo'
 import { activePoints, calculateCapacity, capacityLabel, loadIcon, requestLabels, suggestRoom, themes } from '../lib/model'
-import { invokePlateAssistant, isSupabaseConfigured, supabase } from '../lib/supabase'
+import { createSupabaseClient, invokePlateAssistant, type SupabasePublicConfig } from '../lib/supabase'
 import type { CapacityCheckin, CircleMember, PassRequest, PlateItem, Profile, RequestKind, ThemeId } from '../types'
 
 type View = 'plate' | 'table' | 'requests' | 'insights' | 'privacy'
@@ -25,7 +26,10 @@ function clientId() {
   return globalThis.crypto?.randomUUID?.() ?? `local-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-export default function App() {
+export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublicConfig }) {
+  const { url, publishableKey } = supabaseConfig
+  const supabase = useMemo(() => createSupabaseClient({ url, publishableKey }), [url, publishableKey])
+  const isSupabaseConfigured = Boolean(supabase)
   const [mode, setMode] = useState<AppMode>(supabase ? 'loading' : 'signed-out')
   const [userId, setUserId] = useState<string | null>(null)
   const [view, setView] = useState<View>('plate')
@@ -172,7 +176,7 @@ export default function App() {
   }
 
   if (mode === 'loading') return <main className="loading-shell"><div className="loading-plate"><Sparkles /><b>Setting your table…</b><span>Loading your private plate</span></div></main>
-  if (mode === 'signed-out') return <AuthGate onDemo={enterDemo} />
+  if (mode === 'signed-out') return <AuthGate supabase={supabase} onDemo={enterDemo} />
 
   async function saveProfile(next: Profile) {
     setProfile({ ...next, initials: initialsFor(next.displayName) })
@@ -341,12 +345,12 @@ export default function App() {
       {modal === 'setup' && <SetupModal profile={profile} checkin={checkin} onSave={async (nextProfile, nextCheckin) => { await saveProfile(nextProfile); await saveCheckin(nextCheckin); setModal('add') }} />}
       {modal === 'profile' && <ProfileModal profile={profile} onSave={saveProfile} onClose={() => setModal('none')} />}
       {modal === 'checkin' && <CheckinModal value={checkin} onSave={saveCheckin} onClose={() => setModal('none')} />}
-      {modal === 'brain' && <BrainDumpModal ownerId={profile.id} onApply={applyBrainDump} onClose={() => setModal('none')} />}
+      {modal === 'brain' && <BrainDumpModal supabase={supabase} ownerId={profile.id} onApply={applyBrainDump} onClose={() => setModal('none')} />}
       {modal === 'add' && <AddItemModal ownerId={profile.id} onAdd={addItem} onClose={() => setModal('none')} />}
       {modal === 'edit' && selectedItem && <EditItemModal item={selectedItem} onSave={updateItem} onDelete={() => setModal('delete')} onClose={() => { setSelectedItem(null); setModal('none') }} />}
       {modal === 'delete' && selectedItem && <DeleteItemModal item={selectedItem} onConfirm={() => void deleteItem(selectedItem)} onBack={() => setModal('edit')} onClose={() => { setSelectedItem(null); setModal('none') }} />}
       {modal === 'invite' && <InviteModal circle={circle} canJoin={mode === 'account'} onJoin={joinCircle} onClose={() => { setSelectedItem(null); setModal('none') }} />}
-      {modal === 'room' && <RoomModal used={used} capacity={capacity} items={items} quickSuggestions={suggestions} canUseAi={mode === 'account'} onApply={applyRoom} onClose={() => setModal('none')} />}
+      {modal === 'room' && <RoomModal supabase={supabase} used={used} capacity={capacity} items={items} quickSuggestions={suggestions} canUseAi={mode === 'account'} onApply={applyRoom} onClose={() => setModal('none')} />}
       {modal === 'pass' && selectedItem && <PassModal item={selectedItem} members={members.filter((member) => member.id !== profile.id)} onInvite={() => setModal('invite')} onSend={sendPass} onClose={() => { setSelectedItem(null); setModal('none') }} />}
     </div>
   )
@@ -548,7 +552,7 @@ function CheckinModal({ value, onSave, onClose }: { value: CapacityCheckin; onSa
   return <Modal title="Capacity check-in" onClose={onClose}><p className="eyebrow">A MOMENT WITH YOURSELF</p><h2>What does today actually have available?</h2><p className="modal-intro">This is an editable planning estimate, not a health assessment.</p><div className="checkin-list">{labels.map(([key, label, help]) => <label key={key}><span><b>{label}</b><small>{help}</small></span><input type="range" min="1" max="5" value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: Number(e.target.value) })} /><strong>{draft[key]}/5</strong></label>)}</div><div className="capacity-preview"><Sparkles /><span><b>About {calculateCapacity(draft)} points available</b><small>You can edit this number after saving.</small></span></div><div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={() => onSave(draft)}>Save today’s capacity</button></div></Modal>
 }
 
-function BrainDumpModal({ ownerId, onApply, onClose }: { ownerId: string; onApply: (items: PlateItem[]) => Promise<boolean>; onClose: () => void }) {
+function BrainDumpModal({ supabase, ownerId, onApply, onClose }: { supabase: SupabaseClient | null; ownerId: string; onApply: (items: PlateItem[]) => Promise<boolean>; onClose: () => void }) {
   const draftKey = `myplate-brain-draft:${ownerId}`
   const [text, setText] = useState(() => readSessionDraft(draftKey, ''))
   const [proposal, setProposal] = useState<AssistantProposal[]>([])
@@ -559,7 +563,7 @@ function BrainDumpModal({ ownerId, onApply, onClose }: { ownerId: string; onAppl
   function discard() { clearSessionDraft(draftKey); onClose() }
   async function organize() {
     setLoading(true); setError('')
-    const { data, error: assistantError } = await invokePlateAssistant('brain_dump', { text })
+    const { data, error: assistantError } = await invokePlateAssistant(supabase, 'brain_dump', { text })
     const rows = (data as { proposals?: AssistantProposal[] } | null)?.proposals
     if (assistantError || !rows?.length) { setError('Plate Assistant is unavailable right now. Nothing was changed—try again or add items manually.'); setLoading(false); return }
     setProposal(rows)
@@ -576,14 +580,14 @@ function BrainDumpModal({ ownerId, onApply, onClose }: { ownerId: string; onAppl
   return <Modal title="Brain dump" onClose={discard} wide><p className="eyebrow">MESSY IS WELCOME</p><h2>Put everything on the table.</h2><p className="modal-intro">AI organizes a review-only proposal. Nothing touches your plate until you approve it.</p>{proposal.length === 0 ? <><textarea rows={7} value={text} onChange={(e) => setText(e.target.value)} placeholder="I need to finish the deck, pick up groceries, call my doctor, and I promised I’d check on my friend…" />{error && <p className="form-error ai-error">{error}</p>}<div className="safe-callout"><ShieldCheck /><span>Your draft stays in this browser tab until you submit or cancel. Only this message is used for the AI request, and model storage is disabled.</span></div><div className="modal-footer end"><button className="secondary-button" onClick={discard}>Cancel</button><button className="primary-button" disabled={loading || text.trim().length < 5} onClick={organize}><WandSparkles size={17} /> {loading ? 'Organizing privately…' : 'Organize my thoughts'}</button></div></> : <><div className="review-banner"><ShieldCheck /><span><b>Review before adding</b> Uncheck anything that does not feel right. AI estimates are editable planning suggestions—not facts.</span></div><div className="proposal-list">{proposal.map((item, index) => <label key={`${item.title}-${index}`}><input type="checkbox" checked={selected.has(index)} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next })} /><span className="item-color" style={{ background: categoryColor[item.category] }} /><div><b>{item.title}</b><small>{item.category} · {item.points} points · {item.loads.join(' + ')}</small><small>{item.reason}</small></div><em>AI proposal</em></label>)}</div><div className="modal-footer end"><button className="secondary-button" onClick={() => setProposal([])}>Back</button><button className="primary-button" disabled={loading || !approved.length} onClick={() => void applyApproved()}><Check size={17} /> {loading ? 'Adding…' : `Add ${approved.length} approved ${approved.length === 1 ? 'item' : 'items'}`}</button></div></>}</Modal>
 }
 
-function RoomModal({ used, capacity, items, quickSuggestions, canUseAi, onApply, onClose }: { used: number; capacity: number; items: PlateItem[]; quickSuggestions: ReturnType<typeof suggestRoom>; canUseAi: boolean; onApply: (action: string, itemId: string) => void; onClose: () => void }) {
+function RoomModal({ supabase, used, capacity, items, quickSuggestions, canUseAi, onApply, onClose }: { supabase: SupabaseClient | null; used: number; capacity: number; items: PlateItem[]; quickSuggestions: ReturnType<typeof suggestRoom>; canUseAi: boolean; onApply: (action: string, itemId: string) => void; onClose: () => void }) {
   const [aiSuggestions, setAiSuggestions] = useState<AssistantProposal[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   async function askAi() {
     setLoading(true); setError('')
     const safeItems = items.filter((item) => item.status === 'active').map(({ id, title, category, points, loads, status }) => ({ id, title, category, points, loads, status }))
-    const { data, error: assistantError } = await invokePlateAssistant('make_room', { capacity, used, items: safeItems })
+    const { data, error: assistantError } = await invokePlateAssistant(supabase, 'make_room', { capacity, used, items: safeItems })
     const rows = (data as { proposals?: AssistantProposal[] } | null)?.proposals?.filter((row) => row.action && row.sourceItemId && safeItems.some((item) => item.id === row.sourceItemId))
     if (assistantError || !rows?.length) setError('Plate Assistant is unavailable right now. Your quick options still work, and nothing was changed.')
     else setAiSuggestions(rows)
