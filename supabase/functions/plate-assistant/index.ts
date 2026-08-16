@@ -20,7 +20,7 @@ const proposalSchema = {
         properties: {
           title: { type: 'string' }, category: { type: 'string', enum: categories },
           points: { type: 'integer', minimum: 5, maximum: 50 },
-          loads: { type: 'array', items: { type: 'string', enum: loads }, uniqueItems: true },
+          loads: { type: 'array', items: { type: 'string', enum: loads } },
           reason: { type: 'string' }, nextStep: { type: ['string', 'null'] },
           action: { type: ['string', 'null'], enum: ['move', 'split', 'pass', null] },
           sourceItemId: { type: ['string', 'null'] },
@@ -62,9 +62,38 @@ Deno.serve(async (request) => {
         text: { format: { type: 'json_schema', name: 'myplate_proposal', strict: true, schema: proposalSchema } },
       }),
     })
-    if (!response.ok) throw new Error(`Provider returned ${response.status}`)
-    const body = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }> }
-    const text = body.output_text ?? body.output?.flatMap((item) => item.content ?? []).find((part) => part.type === 'output_text')?.text
+    if (!response.ok) {
+      let providerError: { error?: { code?: string; type?: string } } = {}
+      try { providerError = await response.json() } catch { /* response was not JSON */ }
+      const code = providerError.error?.code
+      const type = providerError.error?.type
+      console.error('OpenAI provider error', { status: response.status, code, type })
+      const message = response.status === 401
+        ? 'The Plate Assistant API key was rejected. Please check the OpenAI key.'
+        : response.status === 429
+          ? 'The Plate Assistant has reached its temporary usage limit. Please try again shortly.'
+          : response.status === 400
+            ? 'The Plate Assistant request format needs attention.'
+            : 'The Plate Assistant provider is temporarily unavailable.'
+      return json({ error: message }, response.status === 429 ? 429 : 503)
+    }
+    const body = await response.json() as {
+      status?: string
+      incomplete_details?: { reason?: string }
+      output_text?: string
+      output?: Array<{ content?: Array<{ type?: string; text?: string; refusal?: string }> }>
+    }
+    const parts = body.output?.flatMap((item) => item.content ?? []) ?? []
+    const refusal = parts.find((part) => part.type === 'refusal')?.refusal
+    if (refusal) {
+      console.warn('Plate Assistant returned a safety refusal')
+      return json({ error: 'The assistant could not safely organize that text. Nothing was changed or shared.' }, 422)
+    }
+    if (body.status === 'incomplete') {
+      console.error('Plate Assistant response incomplete', { reason: body.incomplete_details?.reason })
+      return json({ error: 'The assistant response was incomplete. Please shorten the brain dump and try again.' }, 503)
+    }
+    const text = body.output_text ?? parts.find((part) => part.type === 'output_text')?.text
     if (typeof text !== 'string') throw new Error('No structured output')
     return json(JSON.parse(text))
   } catch (error) {
