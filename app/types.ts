@@ -31,6 +31,8 @@ export interface PlateItem {
   status: PlateStatus
   due?: string
   note?: string
+  icon?: string
+  steps?: string[]
   ownerId: string
 }
 
