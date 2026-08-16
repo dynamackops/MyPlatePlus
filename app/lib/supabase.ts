@@ -1,12 +1,18 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+export type SupabasePublicConfig = {
+  url?: string
+  publishableKey?: string
+}
 
-export const isSupabaseConfigured = Boolean(url && key && !url.includes('your-project'))
-export const supabase = isSupabaseConfigured ? createClient(url!, key!) : null
+export function createSupabaseClient(config: SupabasePublicConfig) {
+  const { url, publishableKey } = config
+  return url && publishableKey && !url.includes('your-project')
+    ? createClient(url, publishableKey)
+    : null
+}
 
-export async function requestMagicLink(email: string) {
+export async function requestMagicLink(supabase: SupabaseClient | null, email: string) {
   if (!supabase) return { error: new Error('Supabase is not configured.') }
   return supabase.auth.signInWithOtp({
     email,
@@ -14,7 +20,7 @@ export async function requestMagicLink(email: string) {
   })
 }
 
-export async function invokePlateAssistant(mode: 'brain_dump' | 'make_room', payload: unknown) {
+export async function invokePlateAssistant(supabase: SupabaseClient | null, mode: 'brain_dump' | 'make_room', payload: unknown) {
   if (!supabase) return { data: null, error: new Error('AI is available after Supabase setup.') }
   return supabase.functions.invoke('plate-assistant', { body: { mode, payload } })
 }
