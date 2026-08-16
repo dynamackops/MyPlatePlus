@@ -6,6 +6,8 @@ MyPlate+ is a privacy-first capacity and collaborative care system for people wh
 
 Built from scratch for **Hack for Humanity · Summer 2026**.
 
+**Live app:** https://myplate-plus.jasminegm100.chatgpt.site
+
 ## What makes it Plus
 
 - Dynamic daily capacity check-ins
@@ -46,14 +48,14 @@ npm install
 npm run dev
 ```
 
-Without environment variables the application opens in a complete interactive demo mode. This makes the hackathon experience immediately reviewable without creating an account.
+Without environment variables the application opens on the MyPlate+ login screen with a clearly labeled interactive-demo option. This makes the hackathon experience immediately reviewable without creating an account.
 
 ## Enable real accounts
 
 1. Create a Supabase project.
 2. Apply `supabase/schema.sql` in the SQL Editor. The file includes explicit Data API grants and row-level security policies.
 3. Copy `.env.example` to `.env.local`.
-4. Add the project URL and **publishable** key. Never use a secret or service-role key in Vite.
+4. Add `NEXT_PUBLIC_SUPABASE_URL` and the **publishable** key. Never use a secret or service-role key in browser code.
 5. Configure the correct Site URL and redirect URL in Supabase Auth.
 6. Deploy the `plate-assistant` Edge Function and configure `OPENAI_API_KEY` as a server-side function secret.
 
@@ -69,7 +71,7 @@ The current Supabase platform no longer exposes all new tables through the Data 
 npm run dev
 npm run build
 npm run test
-npm run preview
+npm run validate:artifact
 ```
 
 ## Current build status
@@ -87,4 +89,3 @@ Next implementation checkpoints:
 ## Product principle
 
 > Capacity is information. Support is consent. Neither is a measure of worth.
-

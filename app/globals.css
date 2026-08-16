@@ -253,6 +253,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .auth-card input { padding: 13px; color: #173e35; }
 .auth-card .text-button { width: 100%; margin-top: 8px; }
 .privacy-note { margin: 20px 0 0; padding-top: 18px; border-top: 1px solid #d9dfd9; display: flex; gap: 8px; color: #60726c; font-size: 12px; }
+.setup-note { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; margin: 14px 0; border-radius: 14px; background: rgba(42,94,74,.08); color: #173e35; font-size: 13px; line-height: 1.45; }
+.setup-note svg { flex: 0 0 auto; margin-top: 2px; color: #2a5e4a; }
+.setup-note strong { display: block; }
 .success-box { margin: 20px 0; padding: 15px; border-radius: 13px; display: flex; gap: 10px; background: #e8f2ec; }
 .success-box div { display: grid; gap: 4px; }.success-box span { color: #60726c; }
 .form-error { color: #ad3f4c !important; font-size: 12px; }
