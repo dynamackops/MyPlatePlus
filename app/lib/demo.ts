@@ -3,11 +3,20 @@ import type { CapacityCheckin, Circle, PassRequest, PlateItem, Profile } from '.
 export const demoProfile: Profile = { id: 'jasmine', displayName: 'Jasmine', initials: 'JM', theme: 'botanical', sharedStatus: 'limited' }
 export const defaultCheckin: CapacityCheckin = { physical: 3, cognitive: 3, emotional: 2, sensory: 3, social: 2, recovery: 4 }
 
+function relativeDate(days: number) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export const demoItems: PlateItem[] = [
-  { id: 'demo-1', title: 'Finish hackathon prototype', category: 'creative', points: 30, loads: ['cognitive', 'sensory'], status: 'active', due: 'Today', ownerId: 'jasmine' },
-  { id: 'demo-2', title: 'Client handoff', category: 'work', points: 22, loads: ['cognitive', 'social'], status: 'active', due: 'Tomorrow', ownerId: 'jasmine' },
-  { id: 'demo-3', title: 'Pick up groceries', category: 'home', points: 15, loads: ['physical', 'sensory'], status: 'active', due: 'Today', ownerId: 'jasmine' },
-  { id: 'demo-4', title: 'Therapy appointment', category: 'health', points: 18, loads: ['emotional', 'social'], status: 'active', due: 'Thursday', ownerId: 'jasmine' },
+  { id: 'demo-1', title: 'Finish hackathon prototype', category: 'creative', points: 30, loads: ['cognitive', 'sensory'], status: 'active', due: relativeDate(0), ownerId: 'jasmine' },
+  { id: 'demo-2', title: 'Client handoff', category: 'work', points: 22, loads: ['cognitive', 'social'], status: 'active', due: relativeDate(1), ownerId: 'jasmine' },
+  { id: 'demo-3', title: 'Pick up groceries', category: 'home', points: 15, loads: ['physical', 'sensory'], status: 'active', due: relativeDate(0), ownerId: 'jasmine' },
+  { id: 'demo-4', title: 'Therapy appointment', category: 'health', points: 18, loads: ['emotional', 'social'], status: 'active', due: relativeDate(4), ownerId: 'jasmine' },
   { id: 'demo-5', title: 'Reply to group chat', category: 'social', points: 8, loads: ['social', 'emotional'], status: 'side-plate', ownerId: 'jasmine' },
 ]
 
