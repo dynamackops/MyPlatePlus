@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   ArrowRight, Bell, Brain, Check, ChevronRight, CircleUserRound, Clock3,
   HandHeart, HeartHandshake, Inbox, Lightbulb, LockKeyhole, LogOut, Menu,
-  Plus, RefreshCcw, Settings, ShieldCheck, Sparkles, Users, WandSparkles, X,
+  Pencil, Plus, RefreshCcw, Settings, ShieldCheck, Sparkles, Trash2, Users, WandSparkles, X,
 } from 'lucide-react'
 import { AuthGate } from './AuthGate'
 import { demoCircle, defaultCheckin, demoItems, demoProfile, demoRequests } from '../lib/demo'
@@ -37,7 +37,7 @@ export default function App() {
   const [circles, setCircles] = useState<CircleSummary[]>([])
   const [members, setMembers] = useState<CircleMember[]>([])
   const [checkinHistory, setCheckinHistory] = useState<Array<CapacityCheckin & { checkedInOn: string; availablePoints: number }>>([])
-  const [modal, setModal] = useState<'none' | 'setup' | 'profile' | 'checkin' | 'brain' | 'room' | 'pass' | 'add' | 'invite'>('none')
+  const [modal, setModal] = useState<'none' | 'setup' | 'profile' | 'checkin' | 'brain' | 'room' | 'pass' | 'add' | 'edit' | 'delete' | 'invite'>('none')
   const [selectedItem, setSelectedItem] = useState<PlateItem | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
   const [notice, setNotice] = useState('')
@@ -124,15 +124,25 @@ export default function App() {
 
   useEffect(() => {
     if (!supabase) return
+    let activeUserId: string | null = null
+    let cancelled = false
     void supabase.auth.getSession().then(({ data }) => {
-      if (data.session) void loadAccount(data.session.user.id, data.session.user.email)
-      else setMode('signed-out')
+      if (cancelled) return
+      if (data.session && activeUserId !== data.session.user.id) {
+        activeUserId = data.session.user.id
+        void loadAccount(data.session.user.id, data.session.user.email)
+      } else if (!data.session) setMode('signed-out')
     })
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' && session) void loadAccount(session.user.id, session.user.email)
-      if (event === 'SIGNED_OUT') { setUserId(null); setMode('signed-out') }
+      // Supabase may emit SIGNED_IN again when a browser tab regains focus.
+      // Only hydrate when the actual account changes so open modals and drafts stay intact.
+      if (event === 'SIGNED_IN' && session && activeUserId !== session.user.id) {
+        activeUserId = session.user.id
+        void loadAccount(session.user.id, session.user.email)
+      }
+      if (event === 'SIGNED_OUT') { activeUserId = null; setUserId(null); setMode('signed-out') }
     })
-    return () => data.subscription.unsubscribe()
+    return () => { cancelled = true; data.subscription.unsubscribe() }
     // The auth listener is intentionally registered once; it reads fresh account data on each event.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -187,20 +197,49 @@ export default function App() {
   }
 
   async function addItem(item: PlateItem) {
-    if (mode === 'demo' || !supabase || !userId) { setItems((current) => [item, ...current]); setModal('none'); return }
+    if (mode === 'demo' || !supabase || !userId) { setItems((current) => [item, ...current]); setModal('none'); return true }
     const { data, error } = await supabase.from('plate_items').insert({ owner_id: userId, title: item.title, private_note: item.note ?? null, category: item.category, points: item.points, loads: item.loads, status: item.status, due_on: item.due || null }).select('id').single()
-    if (error) { setNotice('That commitment could not be saved. Please try again.'); return }
+    if (error) { setNotice('That commitment could not be saved. Please try again.'); return false }
     setItems((current) => [{ ...item, id: data.id, ownerId: userId }, ...current])
     setModal('none')
+    return true
   }
 
   async function applyBrainDump(newItems: PlateItem[]) {
-    if (mode === 'demo' || !supabase || !userId) { setItems((current) => [...newItems, ...current]); setModal('none'); return }
+    if (mode === 'demo' || !supabase || !userId) { setItems((current) => [...newItems, ...current]); setModal('none'); return true }
     const rows = newItems.map((item) => ({ owner_id: userId, title: item.title, category: item.category, points: item.points, loads: item.loads, status: item.status }))
     const { data, error } = await supabase.from('plate_items').insert(rows).select('id, owner_id, title, category, points, loads, status')
-    if (error) { setNotice('Your ideas stayed private, but they could not be added yet.'); return }
+    if (error) { setNotice('Your ideas stayed private, but they could not be added yet.'); return false }
     setItems((current) => ([...(data ?? []).map((item) => ({ id: item.id, ownerId: item.owner_id, title: item.title, category: item.category, points: item.points, loads: item.loads, status: item.status } as PlateItem)), ...current]))
     setModal('none')
+    return true
+  }
+
+  async function updateItem(nextItem: PlateItem) {
+    if (mode === 'demo' || !supabase || !userId) {
+      setItems((current) => current.map((item) => item.id === nextItem.id ? nextItem : item))
+      setSelectedItem(null); setModal('none'); setNotice('Commitment updated.')
+      return true
+    }
+    const { data, error } = await supabase.from('plate_items').update({
+      title: nextItem.title, private_note: nextItem.note ?? null, category: nextItem.category,
+      points: nextItem.points, loads: nextItem.loads, status: nextItem.status, due_on: nextItem.due || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', nextItem.id).eq('owner_id', userId).select('id').single()
+    if (error || !data) { setNotice('That commitment could not be updated. Please try again.'); return false }
+    setItems((current) => current.map((item) => item.id === nextItem.id ? nextItem : item))
+    setSelectedItem(null); setModal('none'); setNotice('Commitment updated.')
+    return true
+  }
+
+  async function deleteItem(item: PlateItem) {
+    if (mode === 'account' && supabase && userId) {
+      const { data, error } = await supabase.from('plate_items').delete().eq('id', item.id).eq('owner_id', userId).select('id').single()
+      if (error || !data) { setNotice('That commitment could not be deleted. Please try again.'); return }
+    }
+    clearSessionDraft(`myplate-edit-draft:${item.id}`)
+    setItems((current) => current.filter((candidate) => candidate.id !== item.id))
+    setSelectedItem(null); setModal('none'); setNotice('Commitment deleted.')
   }
 
   function applyRoom(action: string, itemId: string) {
@@ -292,7 +331,7 @@ export default function App() {
 
       <main id="main" className="main-content">
         {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={15} /></button></div>}
-        {view === 'plate' && <PlateView name={profile.displayName} items={items} capacity={capacity} used={used} percent={percent} fullness={fullness} onCheckin={() => setModal('checkin')} onBrain={() => setModal('brain')} onAdd={() => setModal('add')} onRoom={() => setModal('room')} onPass={(item) => { setSelectedItem(item); setModal('pass') }} />}
+        {view === 'plate' && <PlateView name={profile.displayName} items={items} capacity={capacity} used={used} percent={percent} fullness={fullness} onCheckin={() => setModal('checkin')} onBrain={() => setModal('brain')} onAdd={() => setModal('add')} onRoom={() => setModal('room')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onPass={(item) => { setSelectedItem(item); setModal('pass') }} />}
         {view === 'table' && <TableView isDemo={mode === 'demo'} profile={profile} circle={circle} circles={circles} members={members} onCircleChange={switchCircle} onInvite={() => setModal('invite')} onRequest={() => { const item = items.find((i) => i.status === 'active'); if (item) { setSelectedItem(item); setModal('pass') } else setModal('add') }} />}
         {view === 'requests' && <RequestsView requests={requests} members={members} userId={profile.id} onUpdate={respondToRequest} />}
         {view === 'insights' && <InsightsView isDemo={mode === 'demo'} items={items} history={checkinHistory} requests={requests} />}
@@ -304,6 +343,8 @@ export default function App() {
       {modal === 'checkin' && <CheckinModal value={checkin} onSave={saveCheckin} onClose={() => setModal('none')} />}
       {modal === 'brain' && <BrainDumpModal ownerId={profile.id} onApply={applyBrainDump} onClose={() => setModal('none')} />}
       {modal === 'add' && <AddItemModal ownerId={profile.id} onAdd={addItem} onClose={() => setModal('none')} />}
+      {modal === 'edit' && selectedItem && <EditItemModal item={selectedItem} onSave={updateItem} onDelete={() => setModal('delete')} onClose={() => { setSelectedItem(null); setModal('none') }} />}
+      {modal === 'delete' && selectedItem && <DeleteItemModal item={selectedItem} onConfirm={() => void deleteItem(selectedItem)} onBack={() => setModal('edit')} onClose={() => { setSelectedItem(null); setModal('none') }} />}
       {modal === 'invite' && <InviteModal circle={circle} canJoin={mode === 'account'} onJoin={joinCircle} onClose={() => { setSelectedItem(null); setModal('none') }} />}
       {modal === 'room' && <RoomModal used={used} capacity={capacity} items={items} quickSuggestions={suggestions} canUseAi={mode === 'account'} onApply={applyRoom} onClose={() => setModal('none')} />}
       {modal === 'pass' && selectedItem && <PassModal item={selectedItem} members={members.filter((member) => member.id !== profile.id)} onInvite={() => setModal('invite')} onSend={sendPass} onClose={() => { setSelectedItem(null); setModal('none') }} />}
@@ -319,9 +360,9 @@ function NavButton({ active, icon, label, badge, onClick }: { active: boolean; i
   return <button className={`nav-button ${active ? 'active' : ''}`} onClick={onClick}>{icon}<span>{label}</span>{badge ? <b className="nav-badge">{badge}</b> : null}</button>
 }
 
-function PlateView({ name, items, capacity, used, percent, fullness, onCheckin, onBrain, onAdd, onRoom, onPass }: {
+function PlateView({ name, items, capacity, used, percent, fullness, onCheckin, onBrain, onAdd, onRoom, onEdit, onPass }: {
   name: string; items: PlateItem[]; capacity: number; used: number; percent: number; fullness: { label: string; message: string };
-  onCheckin: () => void; onBrain: () => void; onAdd: () => void; onRoom: () => void; onPass: (item: PlateItem) => void
+  onCheckin: () => void; onBrain: () => void; onAdd: () => void; onRoom: () => void; onEdit: (item: PlateItem) => void; onPass: (item: PlateItem) => void
 }) {
   const active = items.filter((item) => item.status === 'active')
   const side = items.filter((item) => item.status === 'side-plate')
@@ -342,7 +383,7 @@ function PlateView({ name, items, capacity, used, percent, fullness, onCheckin, 
         <div className="plate-wrap">
           <div className="plate-rim" aria-label={`${active.length} active commitments on your plate`}>
             <div className="plate-center">
-              {active.map((item, index) => <button key={item.id} className={`plate-object object-${index % 6}`} style={{ '--object-size': `${Math.max(70, item.points * 3.4)}px`, '--object-color': categoryColor[item.category] } as React.CSSProperties} onClick={() => onPass(item)} aria-label={`${item.title}, ${item.points} capacity points`}><strong>{item.title}</strong><small>{item.points} pts</small><span>{item.loads.map(loadIcon).join(' ')}</span></button>)}
+              {active.map((item, index) => <button key={item.id} className={`plate-object object-${index % 6}`} style={{ '--object-size': `${Math.max(70, item.points * 3.4)}px`, '--object-color': categoryColor[item.category] } as React.CSSProperties} onClick={() => onEdit(item)} aria-label={`Edit ${item.title}, ${item.points} capacity points`}><strong>{item.title}</strong><small>{item.points} pts</small><span>{item.loads.map(loadIcon).join(' ')}</span></button>)}
               {active.length === 0 && <div className="empty-plate"><Sparkles /><b>Your plate is ready.</b><span>Add what you’re carrying—big, small, visible, or invisible.</span><button className="primary-button" onClick={onAdd}><Plus size={17} /> Add your first commitment</button></div>}
             </div>
           </div>
@@ -351,9 +392,9 @@ function PlateView({ name, items, capacity, used, percent, fullness, onCheckin, 
       </article>
       <aside className="today-card">
         <div className="section-title"><div><p className="eyebrow">TODAY’S PLAN</p><h2>Commitments</h2></div><button className="small-add" aria-label="Add commitment" onClick={onAdd}><Plus /></button></div>
-        <div className="item-list">{active.map((item) => <div className="item-row" key={item.id}><span className="item-color" style={{ background: categoryColor[item.category] }} /><div><b>{item.title}</b><small>{item.category} · {item.points} pts {item.due ? `· ${item.due}` : ''}</small></div><button className="icon-button subtle" onClick={() => onPass(item)} aria-label={`Pass ${item.title}`}><HandHeart /></button></div>)}</div>
+        <div className="item-list">{active.map((item) => <div className="item-row" key={item.id}><span className="item-color" style={{ background: categoryColor[item.category] }} /><button className="item-summary" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`}><b>{item.title}</b><small>{item.category} · {item.points} pts {item.due ? `· ${item.due}` : ''}</small></button><div className="item-actions"><button className="icon-button subtle" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`} title="Edit"><Pencil /></button><button className="icon-button subtle" onClick={() => onPass(item)} aria-label={`Pass ${item.title}`} title="Pass the Plate"><HandHeart /></button></div></div>)}</div>
         {active.length === 0 && <div className="empty-list"><p>Nothing has been added yet.</p><button className="secondary-button full" onClick={onAdd}><Plus size={17} /> Add a commitment</button></div>}
-        {side.length > 0 && <div className="side-plate"><span><Clock3 size={17} /> Side plate</span>{side.map((item) => <small key={item.id}>{item.title}</small>)}</div>}
+        {side.length > 0 && <div className="side-plate"><span><Clock3 size={17} /> Side plate</span>{side.map((item) => <button className="side-item-button" key={item.id} onClick={() => onEdit(item)}><small>{item.title}</small><Pencil size={14} /></button>)}</div>}
       </aside>
     </section>
   </>
@@ -423,15 +464,62 @@ function ProfileModal({ profile, onSave, onClose }: { profile: Profile; onSave: 
   return <Modal title="Profile and appearance" onClose={onClose} wide><p className="eyebrow">YOUR PLATE, YOUR WAY</p><h2>Profile & appearance</h2><label className="field-label">Display name<input value={draft.displayName} maxLength={80} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label><label className="field-label">Shared capacity status<select value={draft.sharedStatus} onChange={(event) => setDraft({ ...draft, sharedStatus: event.target.value as Profile['sharedStatus'] })}><option value="open">Open to support</option><option value="limited">Limited capacity</option><option value="full">Plate is full</option><option value="recovering">Recovering</option></select></label><div className="theme-grid">{themes.map((theme) => <button type="button" className={`theme-option ${draft.theme === theme.id ? 'selected' : ''}`} key={theme.id} onClick={() => setDraft({ ...draft, theme: theme.id })}><span className="theme-preview" style={{ background: theme.colors[1] }}><i style={{ background: theme.colors[0] }} /><i style={{ background: theme.colors[2] }} /><i style={{ background: theme.colors[0] }} /></span><b>{theme.name}</b><small>{theme.description}</small>{draft.theme === theme.id && <span className="selected-check"><Check /></span>}</button>)}</div><div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={!draft.displayName.trim()} onClick={() => onSave({ ...draft, displayName: draft.displayName.trim() })}>Save changes</button></div></Modal>
 }
 
-function AddItemModal({ ownerId, onAdd, onClose }: { ownerId: string; onAdd: (item: PlateItem) => void; onClose: () => void }) {
-  const [title, setTitle] = useState('')
-  const [category, setCategory] = useState<PlateItem['category']>('work')
-  const [points, setPoints] = useState(15)
-  const [loads, setLoads] = useState<PlateItem['loads']>(['cognitive'])
-  const [due, setDue] = useState('')
+function readSessionDraft<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback
+  try { return JSON.parse(window.sessionStorage.getItem(key) ?? '') as T } catch { return fallback }
+}
+
+function clearSessionDraft(key: string) {
+  if (typeof window !== 'undefined') window.sessionStorage.removeItem(key)
+}
+
+type ItemDraft = Pick<PlateItem, 'title' | 'category' | 'points' | 'loads' | 'status'> & { due: string; note: string }
+
+function AddItemModal({ ownerId, onAdd, onClose }: { ownerId: string; onAdd: (item: PlateItem) => Promise<boolean>; onClose: () => void }) {
+  const draftKey = `myplate-add-draft:${ownerId}`
+  const initial = readSessionDraft<ItemDraft>(draftKey, { title: '', category: 'work', points: 15, loads: ['cognitive'], status: 'active', due: '', note: '' })
+  const [title, setTitle] = useState(initial.title)
+  const [category, setCategory] = useState<PlateItem['category']>(initial.category)
+  const [points, setPoints] = useState(initial.points)
+  const [loads, setLoads] = useState<PlateItem['loads']>(initial.loads)
+  const [due, setDue] = useState(initial.due)
+  const [note, setNote] = useState(initial.note)
+  const [saving, setSaving] = useState(false)
   const loadOptions: PlateItem['loads'][number][] = ['cognitive', 'emotional', 'physical', 'sensory', 'social']
   const toggleLoad = (load: PlateItem['loads'][number]) => setLoads((current) => current.includes(load) ? current.filter((item) => item !== load) : [...current, load])
-  return <Modal title="Add a commitment" onClose={onClose}><p className="eyebrow">PUT IT ON YOUR PLATE</p><h2>What are you carrying?</h2><p className="modal-intro">Capacity points describe how heavy something feels—not how important or difficult it “should” be.</p><label className="field-label">Commitment<input autoFocus value={title} maxLength={240} onChange={(event) => setTitle(event.target.value)} placeholder="Reply to emails, make dinner, rest…" /></label><div className="field-row"><label className="field-label">Category<select value={category} onChange={(event) => setCategory(event.target.value as PlateItem['category'])}>{['work','home','health','social','creative','waiting'].map((value) => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}</select></label><label className="field-label">Due date<input type="date" value={due} onChange={(event) => setDue(event.target.value)} /></label></div><label className="field-label points-field"><span>Capacity weight <b>{points} points</b></span><input type="range" min="5" max="50" step="5" value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><fieldset className="load-picker"><legend>What kind of load does it carry?</legend>{loadOptions.map((load) => <button type="button" className={loads.includes(load) ? 'selected' : ''} key={load} onClick={() => toggleLoad(load)}>{loadIcon(load)} {load}</button>)}</fieldset><div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={!title.trim() || loads.length === 0} onClick={() => onAdd({ id: clientId(), ownerId, title: title.trim(), category, points, loads, status: 'active', due: due || undefined })}><Plus size={17} /> Add to my plate</button></div></Modal>
+  useEffect(() => {
+    window.sessionStorage.setItem(draftKey, JSON.stringify({ title, category, points, loads, status: 'active', due, note } satisfies ItemDraft))
+  }, [draftKey, title, category, points, loads, due, note])
+  function discard() { clearSessionDraft(draftKey); onClose() }
+  async function save() {
+    setSaving(true)
+    const saved = await onAdd({ id: clientId(), ownerId, title: title.trim(), note: note.trim() || undefined, category, points, loads, status: 'active', due: due || undefined })
+    if (saved) clearSessionDraft(draftKey)
+    setSaving(false)
+  }
+  return <Modal title="Add a commitment" onClose={discard}><p className="eyebrow">PUT IT ON YOUR PLATE</p><h2>What are you carrying?</h2><p className="modal-intro">Capacity points describe how heavy something feels—not how important or difficult it “should” be.</p><label className="field-label">Commitment<input autoFocus value={title} maxLength={240} onChange={(event) => setTitle(event.target.value)} placeholder="Reply to emails, make dinner, rest…" /></label><div className="field-row"><label className="field-label">Category<select value={category} onChange={(event) => setCategory(event.target.value as PlateItem['category'])}>{['work','home','health','social','creative','waiting'].map((value) => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}</select></label><label className="field-label">Due date<input type="date" value={due} onChange={(event) => setDue(event.target.value)} /></label></div><label className="field-label">Private note<textarea rows={3} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional context that stays private…" /></label><label className="field-label points-field"><span>Capacity weight <b>{points} points</b></span><input type="range" min="5" max="50" step="5" value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><fieldset className="load-picker"><legend>What kind of load does it carry?</legend>{loadOptions.map((load) => <button type="button" className={loads.includes(load) ? 'selected' : ''} key={load} onClick={() => toggleLoad(load)}>{loadIcon(load)} {load}</button>)}</fieldset><div className="modal-footer end"><button className="secondary-button" onClick={discard}>Cancel</button><button className="primary-button" disabled={saving || !title.trim() || loads.length === 0} onClick={() => void save()}><Plus size={17} /> {saving ? 'Saving…' : 'Add to my plate'}</button></div></Modal>
+}
+
+function EditItemModal({ item, onSave, onDelete, onClose }: { item: PlateItem; onSave: (item: PlateItem) => Promise<boolean>; onDelete: () => void; onClose: () => void }) {
+  const draftKey = `myplate-edit-draft:${item.id}`
+  const initial = readSessionDraft<ItemDraft>(draftKey, { title: item.title, category: item.category, points: item.points, loads: item.loads, status: item.status, due: item.due ?? '', note: item.note ?? '' })
+  const [draft, setDraft] = useState(initial)
+  const [saving, setSaving] = useState(false)
+  const loadOptions: PlateItem['loads'][number][] = ['cognitive', 'emotional', 'physical', 'sensory', 'social']
+  useEffect(() => { window.sessionStorage.setItem(draftKey, JSON.stringify(draft)) }, [draftKey, draft])
+  function discard() { clearSessionDraft(draftKey); onClose() }
+  async function save() {
+    setSaving(true)
+    const saved = await onSave({ ...item, ...draft, title: draft.title.trim(), note: draft.note.trim() || undefined, due: draft.due || undefined })
+    if (saved) clearSessionDraft(draftKey)
+    setSaving(false)
+  }
+  const toggleLoad = (load: PlateItem['loads'][number]) => setDraft((current) => ({ ...current, loads: current.loads.includes(load) ? current.loads.filter((value) => value !== load) : [...current.loads, load] }))
+  return <Modal title="Edit commitment" onClose={discard}><p className="eyebrow">YOUR PLATE CAN CHANGE</p><h2>Edit this commitment.</h2><label className="field-label">Commitment<input autoFocus value={draft.title} maxLength={240} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><div className="field-row"><label className="field-label">Category<select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value as PlateItem['category'] })}>{['work','home','health','social','creative','waiting'].map((value) => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}</select></label><label className="field-label">Status<select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as PlateItem['status'] })}><option value="active">On my plate</option><option value="side-plate">Side plate</option><option value="waiting">Waiting</option><option value="complete">Complete</option></select></label></div><label className="field-label">Due date<input type="date" value={draft.due} onChange={(event) => setDraft({ ...draft, due: event.target.value })} /></label><label className="field-label">Private note<textarea rows={3} maxLength={2000} value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} placeholder="Optional context that stays private…" /></label><label className="field-label points-field"><span>Capacity weight <b>{draft.points} points</b></span><input type="range" min="5" max="50" step="5" value={draft.points} onChange={(event) => setDraft({ ...draft, points: Number(event.target.value) })} /></label><fieldset className="load-picker"><legend>What kind of load does it carry?</legend>{loadOptions.map((load) => <button type="button" className={draft.loads.includes(load) ? 'selected' : ''} key={load} onClick={() => toggleLoad(load)}>{loadIcon(load)} {load}</button>)}</fieldset><div className="modal-footer edit-footer"><button className="danger-button" onClick={onDelete}><Trash2 size={17} /> Delete</button><div><button className="secondary-button" onClick={discard}>Cancel</button><button className="primary-button" disabled={saving || !draft.title.trim() || draft.loads.length === 0} onClick={() => void save()}>{saving ? 'Saving…' : 'Save changes'}</button></div></div></Modal>
+}
+
+function DeleteItemModal({ item, onConfirm, onBack, onClose }: { item: PlateItem; onConfirm: () => void; onBack: () => void; onClose: () => void }) {
+  return <Modal title="Delete commitment" onClose={onClose}><div className="delete-icon"><Trash2 /></div><p className="eyebrow">REMOVE FROM YOUR PLATE</p><h2>Delete “{item.title}”?</h2><p className="modal-intro">This removes the commitment from your private plate. This action cannot be undone.</p><div className="modal-footer end"><button className="secondary-button" onClick={onBack}>Keep it</button><button className="danger-button solid" onClick={onConfirm}><Trash2 size={17} /> Delete commitment</button></div></Modal>
 }
 
 function InviteModal({ circle, canJoin, onJoin, onClose }: { circle: CircleSummary | null; canJoin: boolean; onJoin: (code: string) => Promise<string | null>; onClose: () => void }) {
@@ -460,12 +548,15 @@ function CheckinModal({ value, onSave, onClose }: { value: CapacityCheckin; onSa
   return <Modal title="Capacity check-in" onClose={onClose}><p className="eyebrow">A MOMENT WITH YOURSELF</p><h2>What does today actually have available?</h2><p className="modal-intro">This is an editable planning estimate, not a health assessment.</p><div className="checkin-list">{labels.map(([key, label, help]) => <label key={key}><span><b>{label}</b><small>{help}</small></span><input type="range" min="1" max="5" value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: Number(e.target.value) })} /><strong>{draft[key]}/5</strong></label>)}</div><div className="capacity-preview"><Sparkles /><span><b>About {calculateCapacity(draft)} points available</b><small>You can edit this number after saving.</small></span></div><div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={() => onSave(draft)}>Save today’s capacity</button></div></Modal>
 }
 
-function BrainDumpModal({ ownerId, onApply, onClose }: { ownerId: string; onApply: (items: PlateItem[]) => void; onClose: () => void }) {
-  const [text, setText] = useState('')
+function BrainDumpModal({ ownerId, onApply, onClose }: { ownerId: string; onApply: (items: PlateItem[]) => Promise<boolean>; onClose: () => void }) {
+  const draftKey = `myplate-brain-draft:${ownerId}`
+  const [text, setText] = useState(() => readSessionDraft(draftKey, ''))
   const [proposal, setProposal] = useState<AssistantProposal[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  useEffect(() => { window.sessionStorage.setItem(draftKey, JSON.stringify(text)) }, [draftKey, text])
+  function discard() { clearSessionDraft(draftKey); onClose() }
   async function organize() {
     setLoading(true); setError('')
     const { data, error: assistantError } = await invokePlateAssistant('brain_dump', { text })
@@ -475,8 +566,14 @@ function BrainDumpModal({ ownerId, onApply, onClose }: { ownerId: string; onAppl
     setSelected(new Set(rows.map((_, index) => index)))
     setLoading(false)
   }
+  async function applyApproved() {
+    setLoading(true)
+    const saved = await onApply(approved.map((item) => ({ id: clientId(), ownerId, title: item.title, category: item.category, points: item.points, loads: item.loads, status: 'active' })))
+    if (saved) clearSessionDraft(draftKey)
+    setLoading(false)
+  }
   const approved = proposal.filter((_, index) => selected.has(index))
-  return <Modal title="Brain dump" onClose={onClose} wide><p className="eyebrow">MESSY IS WELCOME</p><h2>Put everything on the table.</h2><p className="modal-intro">AI organizes a review-only proposal. Nothing touches your plate until you approve it.</p>{proposal.length === 0 ? <><textarea rows={7} value={text} onChange={(e) => setText(e.target.value)} placeholder="I need to finish the deck, pick up groceries, call my doctor, and I promised I’d check on my friend…" />{error && <p className="form-error ai-error">{error}</p>}<div className="safe-callout"><ShieldCheck /><span>Only this message is used for this request. It is never shared with your circle. Model storage is disabled.</span></div><div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={loading || text.trim().length < 5} onClick={organize}><WandSparkles size={17} /> {loading ? 'Organizing privately…' : 'Organize my thoughts'}</button></div></> : <><div className="review-banner"><ShieldCheck /><span><b>Review before adding</b> Uncheck anything that does not feel right. AI estimates are editable planning suggestions—not facts.</span></div><div className="proposal-list">{proposal.map((item, index) => <label key={`${item.title}-${index}`}><input type="checkbox" checked={selected.has(index)} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next })} /><span className="item-color" style={{ background: categoryColor[item.category] }} /><div><b>{item.title}</b><small>{item.category} · {item.points} points · {item.loads.join(' + ')}</small><small>{item.reason}</small></div><em>AI proposal</em></label>)}</div><div className="modal-footer end"><button className="secondary-button" onClick={() => setProposal([])}>Back</button><button className="primary-button" disabled={!approved.length} onClick={() => onApply(approved.map((item) => ({ id: clientId(), ownerId, title: item.title, category: item.category, points: item.points, loads: item.loads, status: 'active' })))}><Check size={17} /> Add {approved.length} approved {approved.length === 1 ? 'item' : 'items'}</button></div></>}</Modal>
+  return <Modal title="Brain dump" onClose={discard} wide><p className="eyebrow">MESSY IS WELCOME</p><h2>Put everything on the table.</h2><p className="modal-intro">AI organizes a review-only proposal. Nothing touches your plate until you approve it.</p>{proposal.length === 0 ? <><textarea rows={7} value={text} onChange={(e) => setText(e.target.value)} placeholder="I need to finish the deck, pick up groceries, call my doctor, and I promised I’d check on my friend…" />{error && <p className="form-error ai-error">{error}</p>}<div className="safe-callout"><ShieldCheck /><span>Your draft stays in this browser tab until you submit or cancel. Only this message is used for the AI request, and model storage is disabled.</span></div><div className="modal-footer end"><button className="secondary-button" onClick={discard}>Cancel</button><button className="primary-button" disabled={loading || text.trim().length < 5} onClick={organize}><WandSparkles size={17} /> {loading ? 'Organizing privately…' : 'Organize my thoughts'}</button></div></> : <><div className="review-banner"><ShieldCheck /><span><b>Review before adding</b> Uncheck anything that does not feel right. AI estimates are editable planning suggestions—not facts.</span></div><div className="proposal-list">{proposal.map((item, index) => <label key={`${item.title}-${index}`}><input type="checkbox" checked={selected.has(index)} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next })} /><span className="item-color" style={{ background: categoryColor[item.category] }} /><div><b>{item.title}</b><small>{item.category} · {item.points} points · {item.loads.join(' + ')}</small><small>{item.reason}</small></div><em>AI proposal</em></label>)}</div><div className="modal-footer end"><button className="secondary-button" onClick={() => setProposal([])}>Back</button><button className="primary-button" disabled={loading || !approved.length} onClick={() => void applyApproved()}><Check size={17} /> {loading ? 'Adding…' : `Add ${approved.length} approved ${approved.length === 1 ? 'item' : 'items'}`}</button></div></>}</Modal>
 }
 
 function RoomModal({ used, capacity, items, quickSuggestions, canUseAi, onApply, onClose }: { used: number; capacity: number; items: PlateItem[]; quickSuggestions: ReturnType<typeof suggestRoom>; canUseAi: boolean; onApply: (action: string, itemId: string) => void; onClose: () => void }) {
