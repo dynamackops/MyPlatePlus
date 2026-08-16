@@ -24,11 +24,13 @@ type PlatePreferences = {
   decorativeVisuals: boolean
   compactCards: boolean
   categoryLimits: Record<PlateItem['category'], number>
+  categoryLabels: Record<PlateItem['category'], string>
 }
 
 const defaultPreferences: PlatePreferences = {
   reducedMotion: false, largeText: false, highContrast: false, decorativeVisuals: true, compactCards: false,
   categoryLimits: { work: 35, home: 20, health: 15, social: 10, creative: 15, waiting: 5 },
+  categoryLabels: { work: 'Work', home: 'Home', health: 'Health', social: 'Social', creative: 'Creative', waiting: 'Waiting' },
 }
 const itemDetailMarker = '__myplate_plus_v1__'
 const itemIcons = ['✨', '💼', '☎️', '📅', '🔎', '📚', '🎨', '🎬', '🧺', '🧹', '🏡', '♥', '☕', '🌿', '⏱', '✉️']
@@ -52,7 +54,7 @@ function readPreferences(): PlatePreferences {
   if (typeof window === 'undefined') return defaultPreferences
   try {
     const saved = JSON.parse(localStorage.getItem('myplate-preferences') ?? '{}') as Partial<PlatePreferences>
-    return { ...defaultPreferences, ...saved, categoryLimits: { ...defaultPreferences.categoryLimits, ...(saved.categoryLimits ?? {}) } }
+    return { ...defaultPreferences, ...saved, categoryLimits: { ...defaultPreferences.categoryLimits, ...(saved.categoryLimits ?? {}) }, categoryLabels: { ...defaultPreferences.categoryLabels, ...(saved.categoryLabels ?? {}) } }
   } catch { return defaultPreferences }
 }
 
@@ -397,7 +399,7 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
 
       <main id="main" className="main-content">
         {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={15} /></button></div>}
-        {view === 'plate' && <PlateView name={profile.displayName} items={items} capacity={capacity} used={used} percent={percent} fullness={fullness} preferences={preferences} onCheckin={() => setModal('checkin')} onBrain={() => setModal('brain')} onAdd={() => setModal('add')} onRoom={() => setModal('room')} onFocus={() => setModal('focus')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onPass={(item) => { setSelectedItem(item); setModal('pass') }} onComplete={(item) => void setItemStatus(item, 'complete')} onRestore={(item) => void setItemStatus(item, 'active')} />}
+        {view === 'plate' && <PlateView name={profile.displayName} items={items} capacity={capacity} used={used} percent={percent} fullness={fullness} preferences={preferences} onCheckin={() => setModal('checkin')} onBrain={() => setModal('brain')} onAdd={() => setModal('add')} onRoom={() => setModal('room')} onFocus={() => setModal('focus')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onPass={(item) => { setSelectedItem(item); setModal('pass') }} onComplete={(item) => void setItemStatus(item, 'complete')} onSide={(item) => void setItemStatus(item, 'side-plate')} onRestore={(item) => void setItemStatus(item, 'active')} />}
         {view === 'table' && <TableView isDemo={mode === 'demo'} profile={profile} circle={circle} circles={circles} members={members} onCircleChange={switchCircle} onInvite={() => setModal('invite')} onRequest={() => { const item = items.find((i) => i.status === 'active'); if (item) { setSelectedItem(item); setModal('pass') } else setModal('add') }} />}
         {view === 'requests' && <RequestsView requests={requests} members={members} userId={profile.id} onUpdate={respondToRequest} />}
         {view === 'insights' && <InsightsView isDemo={mode === 'demo'} items={items} history={checkinHistory} requests={requests} />}
@@ -408,8 +410,8 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
       {modal === 'profile' && <ProfileModal profile={profile} onSave={saveProfile} onClose={() => setModal('none')} />}
       {modal === 'checkin' && <CheckinModal value={checkin} onSave={saveCheckin} onClose={() => setModal('none')} />}
       {modal === 'brain' && <BrainDumpModal supabase={supabase} ownerId={profile.id} onApply={applyBrainDump} onClose={() => setModal('none')} />}
-      {modal === 'add' && <AddItemModal ownerId={profile.id} onAdd={addItem} onClose={() => setModal('none')} />}
-      {modal === 'edit' && selectedItem && <EditItemModal item={selectedItem} onSave={updateItem} onDelete={() => setModal('delete')} onClose={() => { setSelectedItem(null); setModal('none') }} />}
+      {modal === 'add' && <AddItemModal ownerId={profile.id} categoryLabels={preferences.categoryLabels} onAdd={addItem} onClose={() => setModal('none')} />}
+      {modal === 'edit' && selectedItem && <EditItemModal item={selectedItem} categoryLabels={preferences.categoryLabels} onSave={updateItem} onDelete={() => setModal('delete')} onClose={() => { setSelectedItem(null); setModal('none') }} />}
       {modal === 'delete' && selectedItem && <DeleteItemModal item={selectedItem} onConfirm={() => void deleteItem(selectedItem)} onBack={() => setModal('edit')} onClose={() => { setSelectedItem(null); setModal('none') }} />}
       {modal === 'invite' && <InviteModal circle={circle} canJoin={mode === 'account'} onJoin={joinCircle} onClose={() => { setSelectedItem(null); setModal('none') }} />}
       {modal === 'room' && <RoomModal supabase={supabase} used={used} capacity={capacity} items={items} quickSuggestions={suggestions} canUseAi={mode === 'account'} onApply={applyRoom} onClose={() => setModal('none')} />}
@@ -424,29 +426,46 @@ function initialsFor(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'MP'
 }
 
+function formatDueDate(value?: string) {
+  if (!value) return 'No date yet'
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`) : new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
 function NavButton({ active, icon, label, badge, onClick }: { active: boolean; icon: React.ReactNode; label: string; badge?: number; onClick: () => void }) {
   return <button className={`nav-button ${active ? 'active' : ''}`} onClick={onClick}>{icon}<span>{label}</span>{badge ? <b className="nav-badge">{badge}</b> : null}</button>
 }
 
-function PlateView({ name, items, capacity, used, percent, fullness, preferences, onCheckin, onBrain, onAdd, onRoom, onFocus, onEdit, onPass, onComplete, onRestore }: {
+function PlateView({ name, items, capacity, used, percent, fullness, preferences, onCheckin, onBrain, onAdd, onRoom, onFocus, onEdit, onPass, onComplete, onSide, onRestore }: {
   name: string; items: PlateItem[]; capacity: number; used: number; percent: number; fullness: { label: string; message: string }; preferences: PlatePreferences;
-  onCheckin: () => void; onBrain: () => void; onAdd: () => void; onRoom: () => void; onFocus: () => void; onEdit: (item: PlateItem) => void; onPass: (item: PlateItem) => void; onComplete: (item: PlateItem) => void; onRestore: (item: PlateItem) => void
+  onCheckin: () => void; onBrain: () => void; onAdd: () => void; onRoom: () => void; onFocus: () => void; onEdit: (item: PlateItem) => void; onPass: (item: PlateItem) => void; onComplete: (item: PlateItem) => void; onSide: (item: PlateItem) => void; onRestore: (item: PlateItem) => void
 }) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [category, setCategory] = useState<'all' | PlateItem['category']>('all')
   const [query, setQuery] = useState('')
-  const [status, setStatus] = useState<'all' | PlateItem['status']>('all')
+  const [lane, setLane] = useState<'plate' | 'side' | 'complete'>('plate')
+  const [selectedDay, setSelectedDay] = useState<'all' | string>('all')
   const [sort, setSort] = useState<'due' | 'points' | 'title'>('due')
   const now = new Date()
   const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay() + weekOffset * 7)
   const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6)
   const dateKey = (date: Date) => date.toISOString().slice(0, 10)
+  const weekDays = Array.from({ length: 7 }, (_, index) => { const date = new Date(weekStart); date.setDate(date.getDate() + index); return date })
   const inWeek = (item: PlateItem) => !item.due || (item.due >= dateKey(weekStart) && item.due <= dateKey(weekEnd))
-  const visible = items.filter((item) => inWeek(item) && (category === 'all' || item.category === category) && (status === 'all' || item.status === status) && item.title.toLowerCase().includes(query.toLowerCase())).sort((a, b) => sort === 'points' ? b.points - a.points : sort === 'title' ? a.title.localeCompare(b.title) : (a.due ?? '9999').localeCompare(b.due ?? '9999'))
-  const active = visible.filter((item) => item.status === 'active')
-  const openItems = visible.filter((item) => item.status === 'active' || item.status === 'waiting')
-  const side = visible.filter((item) => item.status === 'side-plate')
-  const completed = visible.filter((item) => item.status === 'complete')
+  const weekItems = items.filter((item) => inWeek(item) && (category === 'all' || item.category === category) && item.title.toLowerCase().includes(query.toLowerCase()))
+  const active = weekItems.filter((item) => item.status === 'active' && (selectedDay === 'all' || item.due === selectedDay))
+  const laneItems = weekItems.filter((item) => {
+    if (selectedDay !== 'all' && item.due !== selectedDay) return false
+    if (lane === 'plate') return item.status === 'active' || item.status === 'waiting'
+    if (lane === 'side') return item.status === 'side-plate'
+    return item.status === 'complete'
+  }).sort((a, b) => sort === 'points' ? b.points - a.points : sort === 'title' ? a.title.localeCompare(b.title) : (a.due ?? '9999').localeCompare(b.due ?? '9999'))
+  const laneCounts = {
+    plate: weekItems.filter((item) => item.status === 'active' || item.status === 'waiting').length,
+    side: weekItems.filter((item) => item.status === 'side-plate').length,
+    complete: weekItems.filter((item) => item.status === 'complete').length,
+  }
   const categories: Array<'all' | PlateItem['category']> = ['all', 'work', 'home', 'health', 'social', 'creative', 'waiting']
   const weekLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
   return <>
@@ -462,8 +481,17 @@ function PlateView({ name, items, capacity, used, percent, fullness, preferences
     </section>
     <div className="plate-tools">
       <div className="week-picker"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><ChevronLeft /></button><span><b>Weekly plate</b><small>{weekLabel}</small></span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><ChevronRight /></button></div>
-      <div className="category-tabs" aria-label="Filter commitments by category">{categories.map((value) => <button key={value} className={category === value ? 'active' : ''} onClick={() => setCategory(value)}>{value === 'all' ? 'All' : value[0].toUpperCase() + value.slice(1)} <span>{items.filter((item) => inWeek(item) && (value === 'all' || item.category === value)).length}</span></button>)}</div>
+      <div className="category-tabs" aria-label="Filter commitments by category">{categories.map((value) => <button key={value} className={category === value ? 'active' : ''} onClick={() => setCategory(value)}>{value === 'all' ? 'All' : preferences.categoryLabels[value]} <span>{items.filter((item) => inWeek(item) && (value === 'all' || item.category === value)).length}</span></button>)}</div>
     </div>
+    <section className="week-calendar" aria-label={`Dates for ${weekLabel}`}>
+      <button className={selectedDay === 'all' ? 'active' : ''} onClick={() => setSelectedDay('all')}><b>All week</b><small>{weekItems.filter((item) => item.status !== 'complete').length} planned</small></button>
+      {weekDays.map((date) => { const key = dateKey(date); const count = weekItems.filter((item) => item.due === key && item.status !== 'complete').length; return <button key={key} className={`${selectedDay === key ? 'active' : ''} ${key === dateKey(now) ? 'today' : ''}`} onClick={() => setSelectedDay(key)}><span>{date.toLocaleDateString('en-US', { weekday: 'short' })}</span><b>{date.getDate()}</b><small>{count ? `${count} ${count === 1 ? 'item' : 'items'}` : 'Open'}</small></button> })}
+    </section>
+    <nav className="planning-lanes" aria-label="Weekly planning sections">
+      <button className={lane === 'plate' ? 'active' : ''} onClick={() => setLane('plate')}><span>On my plate</span><b>{laneCounts.plate}</b><small>Committed this week</small></button>
+      <button className={lane === 'side' ? 'active' : ''} onClick={() => setLane('side')}><span><Clock3 size={16} /> Side Plate</span><b>{laneCounts.side}</b><small>Parked without pressure</small></button>
+      <button className={lane === 'complete' ? 'active' : ''} onClick={() => setLane('complete')}><span><Check size={16} /> Completed</span><b>{laneCounts.complete}</b><small>Finished this week</small></button>
+    </nav>
     <section className="dashboard-grid">
       <article className="plate-card">
         <div className="section-title"><div><p className="eyebrow">YOUR PRIVATE PLATE</p><h2>What you’re carrying</h2></div><span className="legend-dot">Size shows capacity</span></div>
@@ -478,12 +506,11 @@ function PlateView({ name, items, capacity, used, percent, fullness, preferences
         <div className="load-key"><span>◎ Cognitive</span><span>♥ Emotional</span><span>↟ Physical</span><span>✦ Sensory</span><span>◌ Social</span></div>
       </article>
       <aside className="today-card">
-        <div className="section-title"><div><p className="eyebrow">LIST VIEW</p><h2>Your items <small>{visible.length}</small></h2></div><button className="small-add" aria-label="Add commitment" onClick={onAdd}><Plus /></button></div>
-        <div className="list-tools"><label><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find an item" aria-label="Find an item" /></label><select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} aria-label="Filter by status"><option value="all">All statuses</option><option value="active">On my plate</option><option value="side-plate">Side plate</option><option value="waiting">Waiting</option><option value="complete">Complete</option></select><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="Sort commitments"><option value="due">Due date</option><option value="points">Capacity</option><option value="title">Title</option></select></div>
-        <div className="item-list">{openItems.map((item) => <div className="item-row" key={item.id}><span className="item-color" style={{ background: categoryColor[item.category] }} /><span className="row-icon" aria-hidden="true">{item.icon || '·'}</span><button className="item-summary" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`}><b>{item.title}</b><small>{item.category} · {item.points} pts {item.due ? `· ${item.due}` : ''}{item.status === 'waiting' ? ' · waiting' : ''}{item.steps?.length ? ` · ${item.steps.length} steps` : ''}</small></button><div className="item-actions"><button className="done-button" onClick={() => onComplete(item)} aria-label={`Mark ${item.title} done`} title="Mark done"><Check size={15} /> Done</button><button className="icon-button subtle" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`} title="Edit"><Pencil /></button><button className="icon-button subtle" onClick={() => onPass(item)} aria-label={`Pass ${item.title}`} title="Pass the Plate"><HandHeart /></button></div></div>)}</div>
-        {visible.length === 0 && <div className="empty-list"><p>No items match this view.</p><button className="secondary-button full" onClick={onAdd}><Plus size={17} /> Add a commitment</button></div>}
-        {side.length > 0 && <div className="side-plate"><span><Clock3 size={17} /> Side plate</span>{side.map((item) => <button className="side-item-button" key={item.id} onClick={() => onEdit(item)}><small>{item.title}</small><Pencil size={14} /></button>)}</div>}
-        {completed.length > 0 && <details className="completed-section" open={status === 'complete'}><summary><span><Check size={16} /> Completed</span><b>{completed.length}</b></summary>{completed.map((item) => <div className="completed-row" key={item.id}><span><b>{item.title}</b><small>{item.category} · {item.points} pts</small></span><button onClick={() => onRestore(item)}><RefreshCcw size={14} /> Restore</button></div>)}</details>}
+        <div className="section-title"><div><p className="eyebrow">{selectedDay === 'all' ? 'WEEKLY LIST' : formatDueDate(selectedDay).toUpperCase()}</p><h2>{lane === 'plate' ? 'Your commitments' : lane === 'side' ? 'Side Plate' : 'Completed'} <small>{laneItems.length}</small></h2></div><button className="small-add" aria-label="Add commitment" onClick={onAdd}><Plus /></button></div>
+        <div className="list-tools compact-tools"><label><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find an item" aria-label="Find an item" /></label><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="Sort commitments"><option value="due">Due date</option><option value="points">Capacity</option><option value="title">Title</option></select></div>
+        {lane === 'side' && <p className="lane-note"><Clock3 size={15} /> Side Plate holds things you still care about without counting them toward today’s active load.</p>}
+        <div className="item-list">{laneItems.map((item) => <div className="item-row" key={item.id}><span className="item-color" style={{ background: categoryColor[item.category] }} /><span className="row-icon" aria-hidden="true">{item.icon || '·'}</span><button className="item-summary" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`}><b>{item.title}</b><small>{preferences.categoryLabels[item.category]} · {item.points} pts · {formatDueDate(item.due)}{item.status === 'waiting' ? ' · waiting on support' : ''}{item.steps?.length ? ` · ${item.steps.length} steps` : ''}</small></button><div className="item-actions">{lane === 'plate' && <><button className="done-button" onClick={() => onComplete(item)} aria-label={`Mark ${item.title} done`} title="Mark done"><Check size={15} /> Done</button><button className="icon-button subtle" onClick={() => onSide(item)} aria-label={`Move ${item.title} to Side Plate`} title="Move to Side Plate"><Clock3 /></button><button className="icon-button subtle" onClick={() => onPass(item)} aria-label={`Pass ${item.title}`} title="Pass the Plate"><HandHeart /></button></>}{lane !== 'plate' && <button className="restore-button" onClick={() => onRestore(item)}><RefreshCcw size={14} /> Return to plate</button>}<button className="icon-button subtle" onClick={() => onEdit(item)} aria-label={`Edit ${item.title}`} title="Edit"><Pencil /></button></div></div>)}</div>
+        {laneItems.length === 0 && <div className="empty-list"><p>{lane === 'side' ? 'Your Side Plate is clear. Move something here when it matters—but not right now.' : lane === 'complete' ? 'Nothing is marked complete for this view yet.' : 'No commitments match this date and category.'}</p>{lane === 'plate' && <button className="secondary-button full" onClick={onAdd}><Plus size={17} /> Add a commitment</button>}</div>}
         <p className="category-guide"><SlidersHorizontal size={14} /> Category guide: {category === 'all' ? capacity : preferences.categoryLimits[category]} points</p>
       </aside>
     </section>
@@ -565,7 +592,7 @@ function clearSessionDraft(key: string) {
 
 type ItemDraft = Pick<PlateItem, 'title' | 'category' | 'points' | 'loads' | 'status'> & { due: string; note: string; icon: string; steps: string[] }
 
-function ItemFields({ draft, setDraft }: { draft: ItemDraft; setDraft: React.Dispatch<React.SetStateAction<ItemDraft>> }) {
+function ItemFields({ draft, setDraft, categoryLabels }: { draft: ItemDraft; setDraft: React.Dispatch<React.SetStateAction<ItemDraft>>; categoryLabels: PlatePreferences['categoryLabels'] }) {
   const [dictationMessage, setDictationMessage] = useState('')
   const loadOptions: PlateItem['loads'][number][] = ['cognitive', 'emotional', 'physical', 'sensory', 'social']
   function dictate() {
@@ -585,7 +612,7 @@ function ItemFields({ draft, setDraft }: { draft: ItemDraft; setDraft: React.Dis
   return <>
     <label className="field-label">Item title <span className="field-tools"><button type="button" onClick={dictate}><Mic size={14} /> Dictate</button></span><input autoFocus value={draft.title} maxLength={240} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="e.g. Book dentist appointment" /></label>
     {dictationMessage && <small className="field-message">{dictationMessage}</small>}
-    <div className="field-row"><label className="field-label">Category<select value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value as PlateItem['category'] }))}>{['work','home','health','social','creative','waiting'].map((value) => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}</select></label><label className="field-label">Status<select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as PlateItem['status'] }))}><option value="active">On my plate</option><option value="side-plate">Side plate</option><option value="waiting">Waiting</option><option value="complete">Complete</option></select></label></div>
+    <div className="field-row"><label className="field-label">Category<select value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value as PlateItem['category'] }))}>{(['work','home','health','social','creative','waiting'] as PlateItem['category'][]).map((value) => <option key={value} value={value}>{categoryLabels[value]}</option>)}</select></label><label className="field-label">Status<select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as PlateItem['status'] }))}><option value="active">On my plate</option><option value="side-plate">Side plate</option><option value="waiting">Waiting</option><option value="complete">Complete</option></select></label></div>
     <fieldset className="point-presets"><legend>How much space does this take?</legend>{pointPresets.map((option) => <button type="button" key={option.value} className={draft.points === option.value ? 'selected' : ''} onClick={() => setDraft((current) => ({ ...current, points: option.value }))}><strong>{option.value}</strong><b>{option.label}</b><small>{option.help}</small></button>)}</fieldset>
     <button type="button" className="estimate-button" onClick={estimate}><Sparkles size={16} /> Help me estimate</button>
     <label className="field-label">Private description <small>Optional</small><textarea rows={3} maxLength={1000} value={draft.note} onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Add context that will make this easier to return to…" /></label>
@@ -596,7 +623,7 @@ function ItemFields({ draft, setDraft }: { draft: ItemDraft; setDraft: React.Dis
   </>
 }
 
-function AddItemModal({ ownerId, onAdd, onClose }: { ownerId: string; onAdd: (item: PlateItem) => Promise<boolean>; onClose: () => void }) {
+function AddItemModal({ ownerId, categoryLabels, onAdd, onClose }: { ownerId: string; categoryLabels: PlatePreferences['categoryLabels']; onAdd: (item: PlateItem) => Promise<boolean>; onClose: () => void }) {
   const draftKey = `myplate-add-draft:${ownerId}`
   const defaults: ItemDraft = { title: '', category: 'work', points: 10, loads: ['cognitive'], status: 'active', due: '', note: '', icon: '✨', steps: [] }
   const saved = readSessionDraft<Partial<ItemDraft>>(draftKey, {})
@@ -611,10 +638,10 @@ function AddItemModal({ ownerId, onAdd, onClose }: { ownerId: string; onAdd: (it
     if (saved) clearSessionDraft(draftKey)
     setSaving(false)
   }
-  return <Modal title="Add a commitment" onClose={discard} wide><p className="eyebrow">WHAT ARE YOU CARRYING?</p><h2>Add to your plate</h2><p className="modal-intro">Capacity points describe how heavy something feels—not how important it “should” be.</p><ItemFields draft={draft} setDraft={setDraft} /><div className="modal-footer end"><button className="secondary-button" onClick={discard}>Cancel</button><button className="primary-button" disabled={saving || !draft.title.trim() || draft.loads.length === 0} onClick={() => void save()}><Plus size={17} /> {saving ? 'Saving…' : 'Add to my plate'}</button></div></Modal>
+  return <Modal title="Add a commitment" onClose={discard} wide><p className="eyebrow">WHAT ARE YOU CARRYING?</p><h2>Add to your plate</h2><p className="modal-intro">Capacity points describe how heavy something feels—not how important it “should” be.</p><ItemFields draft={draft} setDraft={setDraft} categoryLabels={categoryLabels} /><div className="modal-footer end"><button className="secondary-button" onClick={discard}>Cancel</button><button className="primary-button" disabled={saving || !draft.title.trim() || draft.loads.length === 0} onClick={() => void save()}><Plus size={17} /> {saving ? 'Saving…' : 'Add to my plate'}</button></div></Modal>
 }
 
-function EditItemModal({ item, onSave, onDelete, onClose }: { item: PlateItem; onSave: (item: PlateItem) => Promise<boolean>; onDelete: () => void; onClose: () => void }) {
+function EditItemModal({ item, categoryLabels, onSave, onDelete, onClose }: { item: PlateItem; categoryLabels: PlatePreferences['categoryLabels']; onSave: (item: PlateItem) => Promise<boolean>; onDelete: () => void; onClose: () => void }) {
   const draftKey = `myplate-edit-draft:${item.id}`
   const defaults: ItemDraft = { title: item.title, category: item.category, points: item.points, loads: item.loads, status: item.status, due: item.due ?? '', note: item.note ?? '', icon: item.icon ?? '✨', steps: item.steps ?? [] }
   const saved = readSessionDraft<Partial<ItemDraft>>(draftKey, {})
@@ -629,27 +656,37 @@ function EditItemModal({ item, onSave, onDelete, onClose }: { item: PlateItem; o
     if (saved) clearSessionDraft(draftKey)
     setSaving(false)
   }
-  return <Modal title="Edit commitment" onClose={discard} wide><p className="eyebrow">YOUR PLATE CAN CHANGE</p><h2>Edit this commitment.</h2><ItemFields draft={draft} setDraft={setDraft} /><div className="modal-footer edit-footer"><button className="danger-button" onClick={onDelete}><Trash2 size={17} /> Delete</button><div><button className="secondary-button" onClick={discard}>Cancel</button><button className="primary-button" disabled={saving || !draft.title.trim() || draft.loads.length === 0} onClick={() => void save()}>{saving ? 'Saving…' : 'Save changes'}</button></div></div></Modal>
+  return <Modal title="Edit commitment" onClose={discard} wide><p className="eyebrow">YOUR PLATE CAN CHANGE</p><h2>Edit this commitment.</h2><ItemFields draft={draft} setDraft={setDraft} categoryLabels={categoryLabels} /><div className="modal-footer edit-footer"><button className="danger-button" onClick={onDelete}><Trash2 size={17} /> Delete</button><div><button className="secondary-button" onClick={discard}>Cancel</button><button className="primary-button" disabled={saving || !draft.title.trim() || draft.loads.length === 0} onClick={() => void save()}>{saving ? 'Saving…' : 'Save changes'}</button></div></div></Modal>
 }
 
 function SettingsModal({ value, onSave, onClose }: { value: PlatePreferences; onSave: (value: PlatePreferences) => void; onClose: () => void }) {
   const [draft, setDraft] = useState(value)
   const categories: PlateItem['category'][] = ['work', 'home', 'health', 'social', 'creative', 'waiting']
-  const toggles: Array<[Exclude<keyof PlatePreferences, 'categoryLimits'>, string, string]> = [
+  const toggles: Array<[Exclude<keyof PlatePreferences, 'categoryLimits' | 'categoryLabels'>, string, string]> = [
     ['reducedMotion', 'Reduced motion', 'Minimize interface movement'], ['largeText', 'Large text', 'Increase text throughout the app'],
     ['highContrast', 'High contrast', 'Strengthen borders and text contrast'], ['decorativeVisuals', 'Decorative visuals', 'Show calming accents around the plate'],
     ['compactCards', 'Compact task cards', 'Fit more list items on screen'],
   ]
-  return <Modal title="Plate settings" onClose={onClose} wide><p className="eyebrow">MAKE IT YOURS</p><h2>Plate settings</h2><p className="modal-intro">These preferences stay on this device. Your commitments remain attached to your private account.</p><section className="settings-section"><div className="settings-heading"><div><h3>Category guides</h3><p>Gentle planning guides—not limits or rules.</p></div><span>{Object.values(draft.categoryLimits).reduce((sum, points) => sum + points, 0)} total</span></div>{categories.map((category) => <label className="category-limit" key={category}><span><i style={{ background: categoryColor[category] }} /> {category[0].toUpperCase() + category.slice(1)}</span><input type="number" min="0" max="200" step="5" value={draft.categoryLimits[category]} onChange={(event) => setDraft((current) => ({ ...current, categoryLimits: { ...current.categoryLimits, [category]: Number(event.target.value) } }))} /><b>pts</b></label>)}</section><section className="settings-section"><div className="settings-heading"><div><h3>Display preferences</h3><p>Adjust the interface to feel comfortable for you.</p></div></div>{toggles.map(([key, label, help]) => <label className="preference-toggle" key={key}><span><b>{label}</b><small>{help}</small></span><input type="checkbox" checked={draft[key]} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.checked }))} /></label>)}</section><div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={() => onSave(draft)}>Save preferences</button></div></Modal>
+  return <Modal title="Plate settings" onClose={onClose} wide><p className="eyebrow">MAKE IT YOURS</p><h2>Plate settings</h2><p className="modal-intro">These preferences stay on this device. Your commitments remain attached to your private account.</p><section className="settings-section"><div className="settings-heading"><div><h3>Category names & guides</h3><p>Rename categories to fit your life. Colors and saved items stay connected.</p></div><span>{Object.values(draft.categoryLimits).reduce((sum, points) => sum + points, 0)} total</span></div>{categories.map((category) => <div className="category-customizer" key={category}><i style={{ background: categoryColor[category] }} /><label><span className="sr-only">Name for {category} category</span><input type="text" maxLength={24} value={draft.categoryLabels[category]} onChange={(event) => setDraft((current) => ({ ...current, categoryLabels: { ...current.categoryLabels, [category]: event.target.value } }))} onBlur={() => setDraft((current) => ({ ...current, categoryLabels: { ...current.categoryLabels, [category]: current.categoryLabels[category].trim() || defaultPreferences.categoryLabels[category] } }))} /></label><label className="category-points"><span className="sr-only">Point guide for {draft.categoryLabels[category]}</span><input type="number" min="0" max="200" step="5" value={draft.categoryLimits[category]} onChange={(event) => setDraft((current) => ({ ...current, categoryLimits: { ...current.categoryLimits, [category]: Number(event.target.value) } }))} /><b>pts</b></label></div>)}</section><section className="settings-section"><div className="settings-heading"><div><h3>Display preferences</h3><p>Adjust the interface to feel comfortable for you.</p></div></div>{toggles.map(([key, label, help]) => <label className="preference-toggle" key={key}><span><b>{label}</b><small>{help}</small></span><input type="checkbox" checked={draft[key]} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.checked }))} /></label>)}</section><div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={() => onSave(draft)}>Save preferences</button></div></Modal>
 }
 
 function FocusDisplay({ items, capacity, used, percent, onAdd, onEdit, onComplete, onClose }: { items: PlateItem[]; capacity: number; used: number; percent: number; onAdd: () => void; onEdit: (item: PlateItem) => void; onComplete: (item: PlateItem) => void; onClose: () => void }) {
   const active = items.filter((item) => item.status === 'active')
   const nextMoves = [...active].sort((a, b) => (a.due ?? '9999').localeCompare(b.due ?? '9999') || a.points - b.points).slice(0, 3)
   const upcoming = active.filter((item) => item.due).sort((a, b) => (a.due ?? '').localeCompare(b.due ?? ''))[0]
+  const upcomingLabel = upcoming?.due && /^\d{4}-\d{2}-\d{2}$/.test(upcoming.due) ? new Date(`${upcoming.due}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : upcoming?.due
   useEffect(() => { const previous = document.body.style.overflow; document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = previous } }, [])
   function fullscreen() { void document.documentElement.requestFullscreen?.() }
-  return <div className="focus-backdrop" role="dialog" aria-modal="true" aria-label="Focus display"><header className="focus-header"><a className="brand" href="#top"><span className="brand-mark">+</span><span>MyPlate<b>+</b></span></a><div><b>{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())}</b><small>A gentle view of today</small></div><div><button className="secondary-button" onClick={fullscreen}><Maximize2 size={17} /> Browser fullscreen</button><button className="icon-button" onClick={onClose} aria-label="Close focus display"><X /></button></div></header><main className="focus-layout"><section className="focus-plate-card"><div className="focus-capacity"><strong>{percent}%</strong><span><b>{used > capacity ? 'OVERFLOWING' : percent > 80 ? 'NEARLY FULL' : 'OPEN'}</b><small>{used} of {capacity} points · capacity is information</small></span></div><div className="focus-plate"><div>{active.map((item, index) => <button key={item.id} className={`plate-object object-${index % 6}`} style={{ '--object-size': `${Math.max(74, item.points * 3)}px`, '--object-color': categoryColor[item.category] } as React.CSSProperties} onClick={() => onEdit(item)}><span>{item.icon}</span><strong>{item.title}</strong><small>{item.points} pts</small></button>)}{active.length === 0 && <div className="empty-plate"><Sparkles /><b>Your plate is clear.</b><span>Add a commitment when you are ready.</span><button className="primary-button" onClick={onAdd}><Plus size={17} /> Add your first item</button></div>}</div></div></section><aside className="focus-sidebar"><article><p className="eyebrow">A GOOD PLACE TO START</p><h2>Three gentle next moves</h2>{nextMoves.length ? nextMoves.map((item, index) => <div className="focus-move" key={item.id}><button className="focus-move-main" onClick={() => onEdit(item)}><span>{index + 1}</span><span><b>{item.title}</b><small>{item.points} points{item.steps?.[0] ? ` · ${item.steps[0]}` : ''}</small></span><ChevronRight /></button><button className="focus-done" onClick={() => onComplete(item)}><Check size={15} /> Done</button></div>) : <p>Your active list is clear. Take a breath.</p>}</article><article><p className="eyebrow">UPCOMING</p><h2>{upcoming ? upcoming.title : 'Nothing urgent is due.'}</h2><p>{upcoming ? `Due ${new Date(`${upcoming.due}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}` : 'There’s no upcoming date asking for your attention.'}</p></article><blockquote>“Capacity is information,<br />not a measure of worth.”</blockquote></aside></main></div>
+  return <div className="focus-backdrop" role="dialog" aria-modal="true" aria-label="Focus display">
+    <header className="focus-header"><div className="focus-brand"><span className="brand-mark">+</span><span>MyPlate<b>+</b></span></div><div><b>{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())}</b><small>A gentle view of today</small></div><div><button className="secondary-button" onClick={fullscreen}><Maximize2 size={17} /> Fullscreen</button><button className="icon-button" onClick={onClose} aria-label="Close focus display"><X /></button></div></header>
+    <main className="focus-layout">
+      <div className="focus-left">
+        <section className="focus-capacity"><strong>{percent}%</strong><span><b>{used > capacity ? 'OVERFLOWING' : percent > 80 ? 'NEARLY FULL' : 'OPEN'}</b><small>{used > capacity ? `${used - capacity} points over · choose one gentle next move` : `${capacity - used} points remain · you still have room on your plate`}</small></span></section>
+        <section className="focus-plate-card"><div className="focus-plate"><div>{active.map((item, index) => <button key={item.id} className={`plate-object object-${index % 6}`} style={{ '--object-size': `${Math.max(74, item.points * 3)}px`, '--object-color': categoryColor[item.category] } as React.CSSProperties} onClick={() => onEdit(item)}><span>{item.icon}</span><strong>{item.title}</strong><small>{item.points} pts</small></button>)}{active.length === 0 && <div className="empty-plate"><Sparkles /><b>Your plate is clear.</b><span>Add a commitment when you are ready.</span><button className="primary-button" onClick={onAdd}><Plus size={17} /> Add your first item</button></div>}</div></div></section>
+      </div>
+      <aside className="focus-sidebar"><article><p className="eyebrow">A GOOD PLACE TO START</p><h2>Three gentle next moves</h2>{nextMoves.length ? nextMoves.map((item, index) => <div className="focus-move" key={item.id}><button className="focus-move-main" onClick={() => onEdit(item)}><span>{index + 1}</span><span><b>{item.title}</b><small>{item.points} points{item.steps?.[0] ? ` · ${item.steps[0]}` : ''}</small></span><ChevronRight /></button><button className="focus-done" onClick={() => onComplete(item)}><Check size={15} /> Done</button></div>) : <p>Your active list is clear. Take a breath.</p>}</article><article><p className="eyebrow">UPCOMING</p><h2>{upcoming ? upcoming.title : 'Nothing urgent is due.'}</h2><p>{upcoming ? `Due ${upcomingLabel}` : 'There’s no upcoming date asking for your attention.'}</p></article><blockquote>“Capacity is information,<br />not a measure of worth.”</blockquote></aside>
+    </main>
+  </div>
 }
 
 function DeleteItemModal({ item, onConfirm, onBack, onClose }: { item: PlateItem; onConfirm: () => void; onBack: () => void; onClose: () => void }) {
