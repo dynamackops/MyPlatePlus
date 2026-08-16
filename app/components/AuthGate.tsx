@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowRight, Check, HeartHandshake, LoaderCircle, ShieldCheck, Sparkles } from 'lucide-react'
-import { requestMagicLink } from '../lib/supabase'
+import { isSupabaseConfigured, requestMagicLink } from '../lib/supabase'
 
 export function AuthGate({ onDemo }: { onDemo: () => void }) {
   const [email, setEmail] = useState('')
@@ -34,13 +34,14 @@ export function AuthGate({ onDemo }: { onDemo: () => void }) {
           <p className="eyebrow">WELCOME TO YOUR TABLE</p>
           <h2>Sign in to MyPlate+</h2>
           <p>We’ll email you a secure sign-in link. No password to remember.</p>
+          {!isSupabaseConfigured && <div className="setup-note"><ShieldCheck size={18} /><span><strong>Hackathon preview</strong> Account sign-in activates when the MyPlate+ Supabase project is connected. You can explore everything below.</span></div>}
           {state === 'sent' ? (
             <div className="success-box"><Check size={22} /><div><strong>Check your email</strong><span>Your private plate is waiting.</span></div></div>
           ) : (
             <form onSubmit={submit}>
               <label htmlFor="email">Email address</label>
               <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required />
-              <button className="primary-button full" disabled={state === 'loading'}>
+              <button className="primary-button full" disabled={state === 'loading' || !isSupabaseConfigured}>
                 {state === 'loading' ? <LoaderCircle className="spin" size={18} /> : <>Send my sign-in link <ArrowRight size={18} /></>}
               </button>
               {state === 'error' && <p className="form-error">We couldn’t send the link. Check the project configuration and try again.</p>}

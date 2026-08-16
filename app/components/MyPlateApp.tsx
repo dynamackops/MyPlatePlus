@@ -1,14 +1,16 @@
-import { useMemo, useState } from 'react'
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
 import {
   Accessibility, ArrowRight, Bell, Brain, Check, ChevronRight, CircleUserRound, Clock3,
   HandHeart, HeartHandshake, Home, Inbox, Lightbulb, LockKeyhole, LogOut, Menu, Palette,
   Plus, RefreshCcw, Settings, ShieldCheck, Sparkles, Users, WandSparkles, X,
 } from 'lucide-react'
-import { AuthGate } from './components/AuthGate'
-import { demoCircle, defaultCheckin, demoItems, demoProfile, demoRequests } from './lib/demo'
-import { activePoints, calculateCapacity, capacityLabel, loadIcon, requestLabels, suggestRoom, themes } from './lib/model'
-import { isSupabaseConfigured } from './lib/supabase'
-import type { CapacityCheckin, PassRequest, PlateItem, Profile, RequestKind, ThemeId } from './types'
+import { AuthGate } from './AuthGate'
+import { demoCircle, defaultCheckin, demoItems, demoProfile, demoRequests } from '../lib/demo'
+import { activePoints, calculateCapacity, capacityLabel, loadIcon, requestLabels, suggestRoom, themes } from '../lib/model'
+import { isSupabaseConfigured, supabase } from '../lib/supabase'
+import type { CapacityCheckin, PassRequest, PlateItem, Profile, RequestKind, ThemeId } from '../types'
 
 type View = 'plate' | 'table' | 'requests' | 'insights' | 'privacy'
 
@@ -17,9 +19,9 @@ const categoryColor: Record<string, string> = {
 }
 
 export default function App() {
-  const [entered, setEntered] = useState(!isSupabaseConfigured)
+  const [entered, setEntered] = useState(false)
   const [view, setView] = useState<View>('plate')
-  const [profile, setProfile] = useState<Profile>(() => ({ ...demoProfile, theme: (localStorage.getItem('myplate-theme') as ThemeId) || 'botanical' }))
+  const [profile, setProfile] = useState<Profile>(() => ({ ...demoProfile, theme: typeof window === 'undefined' ? 'botanical' : ((localStorage.getItem('myplate-theme') as ThemeId) || 'botanical') }))
   const [items, setItems] = useState<PlateItem[]>(demoItems)
   const [requests, setRequests] = useState<PassRequest[]>(demoRequests)
   const [checkin, setCheckin] = useState<CapacityCheckin>(defaultCheckin)
@@ -32,6 +34,17 @@ export default function App() {
   const percent = Math.round((used / capacity) * 100)
   const fullness = capacityLabel(percent)
   const suggestions = useMemo(() => suggestRoom(items, capacity), [items, capacity])
+
+  useEffect(() => {
+    if (!supabase) return
+    void supabase.auth.getSession().then(({ data }) => {
+      if (data.session) setEntered(true)
+    })
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setEntered(Boolean(session))
+    })
+    return () => data.subscription.unsubscribe()
+  }, [])
 
   if (!entered) return <AuthGate onDemo={() => setEntered(true)} />
 
@@ -85,6 +98,7 @@ export default function App() {
         </nav>
         <div className="sidebar-bottom">
           <NavButton active={view === 'privacy'} icon={<ShieldCheck />} label="AI & Privacy" onClick={() => { setView('privacy'); setMobileNav(false) }} />
+          {isSupabaseConfigured && <NavButton active={false} icon={<LogOut />} label="Sign out" onClick={() => { void supabase?.auth.signOut(); setEntered(false) }} />}
           <button className="profile-row" onClick={() => setModal('theme')}><span className="mini-avatar">{profile.initials}</span><span><b>{profile.displayName}</b><small>{themes.find((t) => t.id === profile.theme)?.name}</small></span><Settings size={17} /></button>
         </div>
       </aside>
