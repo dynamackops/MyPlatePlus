@@ -108,6 +108,11 @@ create index pass_requests_circle_status_idx on public.pass_requests (circle_id,
 create index pass_requests_recipient_idx on public.pass_requests (recipient_id, status) where recipient_id is not null;
 create index shared_responsibilities_circle_idx on public.shared_responsibilities (circle_id, status);
 create index sharing_audit_actor_idx on public.sharing_audit (actor_id, created_at desc);
+create index circles_owner_idx on public.circles (owner_id);
+create index pass_requests_sender_idx on public.pass_requests (sender_id);
+create index pass_requests_source_item_idx on public.pass_requests (source_item_id) where source_item_id is not null;
+create index shared_responsibilities_created_by_idx on public.shared_responsibilities (created_by);
+create index sharing_audit_circle_idx on public.sharing_audit (circle_id);
 
 alter table public.profiles enable row level security;
 alter table public.circles enable row level security;
@@ -149,14 +154,15 @@ $$;
 revoke all on function private.is_circle_member(uuid) from public, anon;
 grant execute on function private.is_circle_member(uuid) to authenticated;
 
-create policy "profiles own select" on public.profiles for select to authenticated
-using ((select auth.uid()) = id);
-create policy "profiles circle peers select" on public.profiles for select to authenticated
-using (exists (
-  select 1 from public.circle_members mine
-  join public.circle_members theirs on theirs.circle_id = mine.circle_id
-  where mine.user_id = (select auth.uid()) and theirs.user_id = profiles.id
-));
+create policy "profiles self or circle peers select" on public.profiles for select to authenticated
+using (
+  (select auth.uid()) = id
+  or exists (
+    select 1 from public.circle_members mine
+    join public.circle_members theirs on theirs.circle_id = mine.circle_id
+    where mine.user_id = (select auth.uid()) and theirs.user_id = profiles.id
+  )
+);
 create policy "profiles own insert" on public.profiles for insert to authenticated
 with check ((select auth.uid()) = id);
 create policy "profiles own update" on public.profiles for update to authenticated
@@ -256,4 +262,3 @@ for each row execute function public.handle_new_user();
 -- Realtime: pass requests are the only table enabled by default.
 -- Personal plate and check-in changes remain outside the shared stream.
 alter publication supabase_realtime add table public.pass_requests;
-
