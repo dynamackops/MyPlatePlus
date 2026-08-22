@@ -100,8 +100,9 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
   const [circles, setCircles] = useState<CircleSummary[]>([])
   const [members, setMembers] = useState<CircleMember[]>([])
   const [checkinHistory, setCheckinHistory] = useState<Array<CapacityCheckin & { checkedInOn: string; availablePoints: number }>>([])
-  const [modal, setModal] = useState<'none' | 'setup' | 'profile' | 'checkin' | 'brain' | 'room' | 'pass' | 'add' | 'edit' | 'delete' | 'invite' | 'settings' | 'focus' | 'calendar' | 'calendar-import'>('none')
+  const [modal, setModal] = useState<'none' | 'setup' | 'profile' | 'checkin' | 'brain' | 'room' | 'pass' | 'add' | 'edit' | 'delete' | 'invite' | 'settings' | 'focus' | 'calendar' | 'calendar-import' | 'first-item-guide'>('none')
   const [selectedItem, setSelectedItem] = useState<PlateItem | null>(null)
+  const [firstGuideItem, setFirstGuideItem] = useState<PlateItem | null>(null)
   const [calendarSelection, setCalendarSelection] = useState<{ items: PlateItem[]; label: string }>({ items: [], label: 'My plate' })
   const [calendarRange, setCalendarRange] = useState<{ start: string; end: string; label: string }>({ start: '', end: '', label: 'This week' })
   const [calendarToken, setCalendarToken] = useState<string | null>(() => typeof window === 'undefined' ? null : sessionStorage.getItem('myplate-google-calendar-token'))
@@ -281,12 +282,28 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
   }
 
   async function addItem(item: PlateItem) {
-    if (mode === 'demo' || !supabase || !userId) { setItems((current) => [item, ...current]); setModal('none'); return true }
+    const guideKey = `myplate-first-item-guide:${userId || profile.id || 'demo'}`
+    const shouldShowGuide = items.length === 0 && localStorage.getItem(guideKey) !== 'seen'
+    if (mode === 'demo' || !supabase || !userId) {
+      setItems((current) => [item, ...current])
+      if (shouldShowGuide) { setFirstGuideItem(item); setModal('first-item-guide') }
+      else setModal('none')
+      return true
+    }
     const { data, error } = await supabase.from('plate_items').insert({ owner_id: userId, title: item.title, private_note: encodePrivateDetails(item), category: item.category, points: item.points, loads: item.loads, status: item.status, due_on: item.due || null }).select('id').single()
     if (error) { setNotice('That commitment could not be saved. Please try again.'); return false }
-    setItems((current) => [{ ...item, id: data.id, ownerId: userId }, ...current])
-    setModal('none')
+    const savedItem = { ...item, id: data.id, ownerId: userId }
+    setItems((current) => [savedItem, ...current])
+    if (shouldShowGuide) { setFirstGuideItem(savedItem); setModal('first-item-guide') }
+    else setModal('none')
     return true
+  }
+
+  function finishFirstItemGuide() {
+    localStorage.setItem(`myplate-first-item-guide:${userId || profile.id || 'demo'}`, 'seen')
+    setFirstGuideItem(null)
+    setModal('none')
+    setNotice('Look for the clock and helping-hand buttons beside each commitment.')
   }
 
   async function applyBrainDump(newItems: PlateItem[]) {
@@ -493,6 +510,7 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
       {modal === 'focus' && <FocusDisplay items={planningItems} capacity={capacity} onAdd={() => setModal('add')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onComplete={(item) => void setItemStatus(item, 'complete')} onClose={() => setModal('none')} />}
       {modal === 'calendar' && <CalendarExportModal items={calendarSelection.items} label={calendarSelection.label} categoryLabels={preferences.categoryLabels} onClose={() => setModal('none')} />}
       {modal === 'calendar-import' && <CalendarImportModal mode={mode} token={calendarToken} range={calendarRange} existingEventIds={items.map((item) => item.calendarEventId).filter(Boolean) as string[]} ownerId={profile.id} categoryLabels={preferences.categoryLabels} onConnect={connectGoogleCalendar} onTokenExpired={clearCalendarToken} onImport={importCalendarItems} onClose={() => setModal('none')} />}
+      {modal === 'first-item-guide' && firstGuideItem && <FirstItemGuideModal item={firstGuideItem} onClose={finishFirstItemGuide} />}
     </div>
   )
 }
@@ -740,6 +758,33 @@ function Modal({ children, title, onClose, wide = false }: { children: React.Rea
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
   }
   return <div className="modal-backdrop" role="presentation" onKeyDown={handleKeys} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}><section ref={dialogRef} tabIndex={-1} className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Close"><X /></button>{children}</section></div>
+}
+
+function FirstItemGuideModal({ item, onClose }: { item: PlateItem; onClose: () => void }) {
+  return <Modal title="Your first commitment is on the plate" onClose={onClose} wide>
+    <div className="first-item-guide">
+      <p className="eyebrow">YOUR FIRST COMMITMENT IS ON THE PLATE</p>
+      <h2>You can make room—or ask for a hand.</h2>
+      <p className="modal-intro"><strong>“{item.title}”</strong> is now on your private plate. When life changes, the two controls beside a commitment help your plan change with it.</p>
+      <div className="guide-choice-grid">
+        <article className="guide-choice-card">
+          <span className="guide-icon"><Clock3 aria-hidden="true" /></span>
+          <p className="eyebrow">SIDE PLATE</p>
+          <h3>Make room without letting go.</h3>
+          <p>Move something here when it still matters, but not right now. It stops counting toward your active load, and you can return it whenever you are ready.</p>
+        </article>
+        <article className="guide-choice-card">
+          <span className="guide-icon"><HandHeart aria-hidden="true" /></span>
+          <p className="eyebrow">PASS THE PLATE</p>
+          <h3>Ask someone you trust for a hand.</h3>
+          <p>Ask them to take it, share it, do it together, help you start, remind you, or listen. Your private plate and notes stay private.</p>
+        </article>
+      </div>
+      <div className="guide-privacy"><ShieldCheck aria-hidden="true" /><span><strong>They only see what you approve.</strong> Passing creates a separate support request—not a view of your plate.</span></div>
+      <p className="guide-control-note">Look for the clock and helping-hand icons beside every commitment.</p>
+      <div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Skip for now</button><button className="primary-button" onClick={onClose}>Got it—show my plate <ArrowRight size={17} /></button></div>
+    </div>
+  </Modal>
 }
 
 function SetupModal({ profile, checkin, onSave }: { profile: Profile; checkin: CapacityCheckin; onSave: (profile: Profile, checkin: CapacityCheckin) => void }) {
