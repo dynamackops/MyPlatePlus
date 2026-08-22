@@ -33,6 +33,7 @@ export interface PlateItem {
   note?: string
   icon?: string
   steps?: string[]
+  calendarEventId?: string
   ownerId: string
 }
 
