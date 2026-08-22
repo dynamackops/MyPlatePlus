@@ -627,7 +627,7 @@ function PlateView({ name, items, capacity, used, percent, fullness, preferences
   const weekDays = Array.from({ length: 7 }, (_, index) => { const date = new Date(weekStart); date.setDate(date.getDate() + index); return date })
   const inWeek = (item: PlateItem) => !item.due || (item.due >= dateKey(weekStart) && item.due <= dateKey(weekEnd))
   const weekItems = items.filter((item) => inWeek(item) && (category === 'all' || item.category === category) && item.title.toLowerCase().includes(query.toLowerCase()))
-  const active = weekItems.filter((item) => item.status === 'active' && (selectedDay === 'all' || item.due === selectedDay))
+  const active = weekItems.filter((item) => (item.status === 'active' || item.status === 'waiting') && (selectedDay === 'all' || item.due === selectedDay))
   const laneItems = weekItems.filter((item) => {
     if (selectedDay !== 'all' && item.due !== selectedDay) return false
     if (lane === 'plate') return item.status === 'active' || item.status === 'waiting'
@@ -672,7 +672,7 @@ function PlateView({ name, items, capacity, used, percent, fullness, preferences
           <div className="plate-rim" aria-label={`${active.length} active commitments on your plate`}>
             <div className="plate-center" ref={plateRef}>
               {active.map((item, index) => <DraggablePlateItem key={item.id} item={item} index={index} plateRef={plateRef} onEdit={onEdit} onMove={onMove} />)}
-              {active.length === 0 && <div className="empty-plate"><Sparkles /><b>Your plate is ready.</b><span>Add what you’re carrying—big, small, visible, or invisible.</span><button className="primary-button" onClick={onAdd}><Plus size={17} /> Add your first commitment</button></div>}
+              {active.length === 0 && <div className="empty-plate"><Sparkles /><b>{items.length === 0 ? 'Your plate is ready.' : 'Nothing is on this view.'}</b><span>{items.length === 0 ? 'Add what you’re carrying—big, small, visible, or invisible.' : 'Try another date or category, or add something new.'}</span><button className="primary-button" onClick={onAdd}><Plus size={17} /> {items.length === 0 ? 'Add your first commitment' : 'Add a commitment'}</button></div>}
             </div>
           </div>
         </div>
@@ -723,7 +723,7 @@ function InsightsView({ isDemo, items, history, requests }: { isDemo: boolean; i
   if (history.length < 3) return <><section className="page-heading"><div><p className="eyebrow">PRIVATE PATTERNS</p><h1>What your capacity is teaching you</h1><p>Observations—not diagnoses, predictions, or judgments.</p></div></section><section className="empty-insights"><Lightbulb /><h2>{history.length}/3 check-ins recorded.</h2><p>Complete {3 - history.length} more {3 - history.length === 1 ? 'check-in' : 'check-ins'} before MyPlate+ describes a pattern. We will never invent a trend from too little data.</p></section></>
   const values = history.map((row) => row.availablePoints)
   const average = Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
-  const active = items.filter((item) => item.status === 'active')
+  const active = items.filter((item) => item.status === 'active' || item.status === 'waiting')
   const heaviest = [...active].sort((a, b) => b.points - a.points)[0]
   const accepted = requests.filter((request) => request.status === 'accepted').length
   return <><section className="page-heading"><div><p className="eyebrow">PRIVATE PATTERNS · YOUR DATA</p><h1>What your capacity is teaching you</h1><p>Based on {history.length} recorded check-ins—not a diagnosis or prediction.</p></div><span className="secondary-button static"><RefreshCcw size={17} /> Last 30 check-ins</span></section><section className="insight-grid"><article className="hero-insight"><span className="insight-symbol">◎</span><p className="eyebrow">YOUR RECORDED BASELINE</p><h2>Your average available capacity was {average} points.</h2><p>Your recorded range was {Math.min(...values)}–{Math.max(...values)} points. Variation is information, not failure.</p></article><article><p className="eyebrow">HEAVIEST ACTIVE ITEM</p><h3>{heaviest?.title ?? 'No active items'}</h3><strong>{heaviest ? `${heaviest.points} pts` : '—'}</strong><p>{heaviest ? `You marked this as ${heaviest.loads.join(' + ')} load.` : 'Add a commitment to compare its weight.'}</p></article><article><p className="eyebrow">SUPPORT ACCEPTED</p><h3>Passed plates</h3><strong>{accepted}</strong><p>{accepted ? 'Accepted support requests recorded at this table.' : 'No accepted support requests yet.'}</p></article><article><p className="eyebrow">CURRENT PLATE</p><h3>{active.length} active</h3><strong>{activePoints(items)} pts</strong><p>These values come directly from what you chose to record.</p></article></section></>
@@ -1104,7 +1104,7 @@ function FocusSoundtrack() {
 
 function FocusDisplay({ items, capacity, onAdd, onEdit, onComplete, onClose }: { items: PlateItem[]; capacity: number; onAdd: () => void; onEdit: (item: PlateItem) => void; onComplete: (item: PlateItem) => void; onClose: () => void }) {
   const today = new Date().toISOString().slice(0, 10)
-  const allActive = items.filter((item) => item.status === 'active')
+  const allActive = items.filter((item) => item.status === 'active' || item.status === 'waiting')
   const active = allActive.filter((item) => !item.due || item.due <= today)
   const used = activePoints(active)
   const percent = Math.round((used / capacity) * 100)
@@ -1211,7 +1211,7 @@ function RoomModal({ supabase, used, capacity, items, quickSuggestions, canUseAi
   const [error, setError] = useState('')
   async function askAi() {
     setLoading(true); setError('')
-    const safeItems = items.filter((item) => item.status === 'active').map(({ id, title, category, points, loads, status }) => ({ id, title, category, points, loads, status }))
+    const safeItems = items.filter((item) => item.status === 'active' || item.status === 'waiting').map(({ id, title, category, points, loads, status }) => ({ id, title, category, points, loads, status }))
     const { data, error: assistantError } = await invokePlateAssistant(supabase, 'make_room', { capacity, used, items: safeItems })
     const rows = (data as { proposals?: AssistantProposal[] } | null)?.proposals?.filter((row) => row.action && row.sourceItemId && safeItems.some((item) => item.id === row.sourceItemId))
     if (assistantError || !rows?.length) setError('Plate Assistant is unavailable right now. Your quick options still work, and nothing was changed.')
