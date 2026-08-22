@@ -25,7 +25,7 @@ export function calculateCapacity(checkin: CapacityCheckin) {
 }
 
 export function activePoints(items: PlateItem[]) {
-  return items.filter((item) => item.status === 'active').reduce((sum, item) => sum + item.points, 0)
+  return items.filter((item) => item.status === 'active' || item.status === 'waiting').reduce((sum, item) => sum + item.points, 0)
 }
 
 export function capacityLabel(percent: number) {
@@ -40,7 +40,7 @@ export function loadIcon(load: LoadType) {
 }
 
 export function suggestRoom(items: PlateItem[], capacity: number) {
-  const active = items.filter((item) => item.status === 'active').sort((a, b) => b.points - a.points)
+  const active = items.filter((item) => item.status === 'active' || item.status === 'waiting').sort((a, b) => b.points - a.points)
   const used = active.reduce((sum, item) => sum + item.points, 0)
   if (used <= capacity) return []
   const largest = active[0]
