@@ -298,6 +298,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .support-types button.selected { border-color: var(--accent); color: var(--accent); background: var(--surface-2); font-weight: 800; }
 .field-label { margin-top: 18px; display: grid; gap: 7px; font-weight: 700; }
 .field-label select { padding: 12px; }
+Warning: truncated output (original token count: 8085)
+Total output lines: 141
+
 .share-receipt { margin-top: 16px; padding: 14px; border: 1px solid var(--border); border-radius: 13px; display: flex; gap: 12px; background: var(--surface-2); }
 .share-receipt > svg { flex: 0 0 auto; color: var(--accent); }
 .share-receipt div { display: grid; gap: 4px; }
@@ -362,6 +365,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .lane-note { margin: 12px; padding: 10px 12px; border-radius: 11px; display: flex; align-items: flex-start; gap: 7px; color: var(--ink-soft); background: var(--surface-2); font-size: 11px; line-height: 1.4; }.lane-note svg { flex: 0 0 auto; color: var(--accent); }
 .restore-button { padding: 7px 9px; border: 1px solid var(--border); border-radius: 9px; display: inline-flex; align-items: center; gap: 5px; color: var(--accent); background: var(--surface-2); font-size: 11px; font-weight: 800; }
 
+.first-item-guide > h2 { margin: 4px 0 9px; font: 650 clamp(30px, 4vw, 42px)/1.08 'Fraunces'; }
+.first-item-guide .modal-intro { max-width: 760px; }
+.guide-choice-grid { margin: 22px 0 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.guide-choice-card { min-width: 0; padding: 22px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-2); box-shadow: 0 8px 24px var(--shadow); }
+.guide-choice-card .eyebrow { margin: 15px 0 4px; }
+.guide-choice-card h3 { margin: 0 0 8px; color: var(--ink); font: 650 23px/1.15 'Fraunces'; }
+.guide-choice-card > p:last-child { margin: 0; color: var(--ink-soft); line-height: 1.55; }
+.guide-icon { width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; color: #fff; background: var(--accent); box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 22%, transparent); }
+.guide-icon svg { width: 23px; }
+.guide-privacy { padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: 14px; display: flex; align-items: flex-start; gap: 11px; color: var(--ink-soft); background: color-mix(in srgb, var(--surface-2) 82%, var(--surface)); line-height: 1.45; }
+.guide-privacy svg { flex: 0 0 auto; color: var(--accent); }.guide-privacy strong { color: var(--ink); }
+.guide-control-note { margin: 14px 0 0; color: var(--ink-soft); text-align: center; font-size: 12px; font-weight: 750; }
+
 .field-tools { float: right; margin-left: auto; }.field-tools button { padding: 4px 7px; border: 1px solid var(--border); border-radius: 8px; display: inline-flex; gap: 5px; align-items: center; color: var(--accent); background: var(--surface-2); font-size: 11px; font-weight: 800; }
 .field-message { margin-top: 5px; color: var(--ink-soft); }.point-presets { margin: 20px 0 10px; padding: 0; border: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }.point-presets legend, .icon-picker legend, .step-editor legend { margin-bottom: 8px; font-weight: 800; }
 .point-presets button { min-height: 88px; padding: 8px; border: 1px solid var(--border); border-radius: 12px; display: grid; place-items: center; gap: 1px; color: var(--ink); background: var(--surface); }.point-presets button.selected { border: 2px solid var(--accent); background: var(--surface-2); }.point-presets strong { font: 650 22px 'Fraunces'; }.point-presets small { color: var(--ink-soft); font-size: 9px; text-align: center; }
@@ -376,7 +392,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .pref-reduced-motion *, .pref-reduced-motion *::before, .pref-reduced-motion *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }.pref-large-text { font-size: 112%; }.pref-high-contrast { --ink-soft: var(--ink); --border: color-mix(in srgb, var(--ink) 45%, transparent); }.pref-no-decor .load-key, .pref-no-decor .legend-dot { display: none; }.pref-compact .item-row { min-height: 54px; padding-block: 7px; }
 
 .calendar-privacy { margin: 18px 0; padding: 14px; border-radius: 14px; display: flex; align-items: flex-start; gap: 11px; color: var(--accent); background: var(--surface-2); }.calendar-privacy svg { flex: 0 0 auto; margin-top: 2px; }.calendar-privacy span { display: grid; gap: 3px; }.calendar-privacy small { color: var(--ink-soft); line-height: 1.45; }
-.calendar-preview-list { display: grid; gap: 8px; }.calendar-preview-list label { min-height: 68px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 13px; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 10px; background: var(--surface); }.calendar-preview-list label.selected { border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); background: color-mix(in srgb, var(--surface-2) 70%, var(--surface)); }.calendar-preview-list input { width: 18px; height: 18px; accent-color: var(--accent); }.calendar-preview-list label > span:nth-of-type(2) { min-width: 0; display: grid; gap: 3px; }.calendar-preview-list label b { overflow-wrap: anywhere; }.calendar-preview-list label small { color: var(--ink-soft); }.calendar-item-icon { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); font-size: 18px; }
+.calendar-preview-list { display: grid; gap: 8px; }.calendar-preview-list label { min-height: 68px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 13px; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 10px; background: var(--su…85 tokens truncated… 0; display: grid; gap: 3px; }.calendar-preview-list label b { overflow-wrap: anywhere; }.calendar-preview-list label small { color: var(--ink-soft); }.calendar-item-icon { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); font-size: 18px; }
 .google-calendar-button { padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; display: inline-flex; align-items: center; gap: 5px; color: var(--accent); background: var(--surface); font-size: 11px; font-weight: 800; }.google-calendar-button:hover { border-color: var(--accent); }
 .calendar-empty { padding: 28px 18px; border: 1px dashed var(--border); border-radius: 15px; display: grid; place-items: center; gap: 5px; color: var(--ink-soft); text-align: center; }.calendar-empty svg { width: 34px; height: 34px; color: var(--accent); }.calendar-empty h3 { margin: 5px 0 0; color: var(--ink); font: 650 21px 'Fraunces'; }.calendar-empty p { max-width: 480px; margin: 0; }
 .calendar-destinations { margin-top: 14px; padding: 13px 15px; border: 1px solid var(--border); border-radius: 13px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }.calendar-destinations > span:first-child { display: grid; gap: 3px; }.calendar-destinations small { color: var(--ink-soft); }.calendar-apps { display: flex; }.calendar-apps i { width: 31px; height: 31px; margin-left: -5px; border: 2px solid var(--surface); border-radius: 50%; display: grid; place-items: center; color: #fff; background: var(--accent); font: 800 12px var(--font-sans); font-style: normal; }.calendar-apps i:nth-child(2) { background: var(--ink); }.calendar-apps i:nth-child(3) { background: #2476c9; }
@@ -409,6 +425,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .request-layout > aside { order: -1; }.insight-grid .hero-insight { grid-column: auto; }.insight-symbol { display: none; }
   .plate-tool-actions { width: 100%; justify-content: stretch; }.calendar-import-button, .calendar-sync-button { flex: 1; justify-content: center; }.plate-tool-actions .category-tabs { flex: 1 1 100%; }
   .theme-grid, .suggestion-grid { grid-template-columns: 1fr 1fr; }.auth-shell { grid-template-columns: 1fr; }.auth-story { min-height: 58vh; }.auth-panel { padding: 34px 16px; }
+  .guide-choice-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 520px) {
   .topbar { height: 66px; }.sidebar { top: 66px; }.brand { font-size: 20px; }.brand-mark { width: 31px; height: 31px; }.top-actions .icon-button { display: none; }
