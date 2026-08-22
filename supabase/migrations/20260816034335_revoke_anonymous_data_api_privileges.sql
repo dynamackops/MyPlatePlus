@@ -1,3 +1,2 @@
-revoke all privileges on all tables in schema public from anon;
-revoke all privileges on all sequences in schema public from anon;
-revoke execute on all functions in schema public from anon;
+-- Production migration history marker. Anonymous privileges remain revoked in
+-- the canonical supabase/schema.sql snapshot.
