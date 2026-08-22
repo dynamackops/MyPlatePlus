@@ -67,17 +67,21 @@ function readPreferences(): PlatePreferences {
   } catch { return defaultPreferences }
 }
 
-function encodePrivateDetails(item: Pick<PlateItem, 'note' | 'icon' | 'steps' | 'calendarEventId'>) {
-  if (!item.icon && !item.steps?.length && !item.calendarEventId) return item.note?.trim() || null
-  return `${itemDetailMarker}${JSON.stringify({ note: item.note?.trim() || '', icon: item.icon || '✨', steps: (item.steps ?? []).filter(Boolean).slice(0, 6), calendarEventId: item.calendarEventId || undefined })}`
+function encodePrivateDetails(item: Pick<PlateItem, 'note' | 'icon' | 'steps' | 'calendarEventId' | 'platePosition'>) {
+  if (!item.icon && !item.steps?.length && !item.calendarEventId && !item.platePosition) return item.note?.trim() || null
+  return `${itemDetailMarker}${JSON.stringify({ note: item.note?.trim() || '', icon: item.icon || '✨', steps: (item.steps ?? []).filter(Boolean).slice(0, 6), calendarEventId: item.calendarEventId || undefined, platePosition: item.platePosition })}`
 }
 
-function decodePrivateDetails(value?: string | null): Pick<PlateItem, 'note' | 'icon' | 'steps' | 'calendarEventId'> {
+function decodePrivateDetails(value?: string | null): Pick<PlateItem, 'note' | 'icon' | 'steps' | 'calendarEventId' | 'platePosition'> {
   if (!value) return {}
   if (!value.startsWith(itemDetailMarker)) return { note: value }
   try {
-    const parsed = JSON.parse(value.slice(itemDetailMarker.length)) as { note?: string; icon?: string; steps?: string[]; calendarEventId?: string }
-    return { note: parsed.note || undefined, icon: parsed.icon || undefined, steps: Array.isArray(parsed.steps) ? parsed.steps.slice(0, 6) : undefined, calendarEventId: parsed.calendarEventId || undefined }
+    const parsed = JSON.parse(value.slice(itemDetailMarker.length)) as { note?: string; icon?: string; steps?: string[]; calendarEventId?: string; platePosition?: { x?: number; y?: number } }
+    const position = parsed.platePosition
+    const platePosition = position && Number.isFinite(position.x) && Number.isFinite(position.y)
+      ? { x: Math.max(0, Math.min(100, Number(position.x))), y: Math.max(0, Math.min(100, Number(position.y))) }
+      : undefined
+    return { note: parsed.note || undefined, icon: parsed.icon || undefined, steps: Array.isArray(parsed.steps) ? parsed.steps.slice(0, 6) : undefined, calendarEventId: parsed.calendarEventId || undefined, platePosition }
   } catch { return { note: value } }
 }
 
@@ -96,8 +100,9 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
   const [circles, setCircles] = useState<CircleSummary[]>([])
   const [members, setMembers] = useState<CircleMember[]>([])
   const [checkinHistory, setCheckinHistory] = useState<Array<CapacityCheckin & { checkedInOn: string; availablePoints: number }>>([])
-  const [modal, setModal] = useState<'none' | 'setup' | 'profile' | 'checkin' | 'brain' | 'room' | 'pass' | 'add' | 'edit' | 'delete' | 'invite' | 'settings' | 'focus' | 'calendar' | 'calendar-import'>('none')
+  const [modal, setModal] = useState<'none' | 'setup' | 'profile' | 'checkin' | 'brain' | 'room' | 'pass' | 'add' | 'edit' | 'delete' | 'invite' | 'settings' | 'focus' | 'calendar' | 'calendar-import' | 'first-item-guide'>('none')
   const [selectedItem, setSelectedItem] = useState<PlateItem | null>(null)
+  const [firstGuideItem, setFirstGuideItem] = useState<PlateItem | null>(null)
   const [calendarSelection, setCalendarSelection] = useState<{ items: PlateItem[]; label: string }>({ items: [], label: 'My plate' })
   const [calendarRange, setCalendarRange] = useState<{ start: string; end: string; label: string }>({ start: '', end: '', label: 'This week' })
   const [calendarToken, setCalendarToken] = useState<string | null>(() => typeof window === 'undefined' ? null : sessionStorage.getItem('myplate-google-calendar-token'))
@@ -277,12 +282,28 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
   }
 
   async function addItem(item: PlateItem) {
-    if (mode === 'demo' || !supabase || !userId) { setItems((current) => [item, ...current]); setModal('none'); return true }
+    const guideKey = `myplate-first-item-guide:${userId || profile.id || 'demo'}`
+    const shouldShowGuide = items.length === 0 && localStorage.getItem(guideKey) !== 'seen'
+    if (mode === 'demo' || !supabase || !userId) {
+      setItems((current) => [item, ...current])
+      if (shouldShowGuide) { setFirstGuideItem(item); setModal('first-item-guide') }
+      else setModal('none')
+      return true
+    }
     const { data, error } = await supabase.from('plate_items').insert({ owner_id: userId, title: item.title, private_note: encodePrivateDetails(item), category: item.category, points: item.points, loads: item.loads, status: item.status, due_on: item.due || null }).select('id').single()
     if (error) { setNotice('That commitment could not be saved. Please try again.'); return false }
-    setItems((current) => [{ ...item, id: data.id, ownerId: userId }, ...current])
-    setModal('none')
+    const savedItem = { ...item, id: data.id, ownerId: userId }
+    setItems((current) => [savedItem, ...current])
+    if (shouldShowGuide) { setFirstGuideItem(savedItem); setModal('first-item-guide') }
+    else setModal('none')
     return true
+  }
+
+  function finishFirstItemGuide() {
+    localStorage.setItem(`myplate-first-item-guide:${userId || profile.id || 'demo'}`, 'seen')
+    setFirstGuideItem(null)
+    setModal('none')
+    setNotice('Look for the clock and helping-hand buttons beside each commitment.')
   }
 
   async function applyBrainDump(newItems: PlateItem[]) {
@@ -334,6 +355,29 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
     setItems((current) => current.map((item) => item.id === nextItem.id ? nextItem : item))
     setSelectedItem(null); setModal('none'); setNotice('Commitment updated.')
     return true
+  }
+
+  async function movePlateItem(item: PlateItem, platePosition?: PlateItem['platePosition']) {
+    const nextItem = { ...item, platePosition }
+    setItems((current) => current.map((candidate) => candidate.id === item.id ? nextItem : candidate))
+    if (mode === 'account' && supabase && userId) {
+      const { error } = await supabase.from('plate_items').update({ private_note: encodePrivateDetails(nextItem), updated_at: new Date().toISOString() }).eq('id', item.id).eq('owner_id', userId)
+      if (error) {
+        setItems((current) => current.map((candidate) => candidate.id === item.id ? item : candidate))
+        setNotice('That plate position could not be saved. Please try again.')
+      }
+    }
+  }
+
+  async function resetPlatePositions(visibleItems: PlateItem[]) {
+    const ids = new Set(visibleItems.map((item) => item.id))
+    const resetItems = visibleItems.map((item) => ({ ...item, platePosition: undefined }))
+    setItems((current) => current.map((item) => ids.has(item.id) ? { ...item, platePosition: undefined } : item))
+    if (mode === 'account' && supabase && userId) {
+      const results = await Promise.all(resetItems.map((item) => supabase.from('plate_items').update({ private_note: encodePrivateDetails(item), updated_at: new Date().toISOString() }).eq('id', item.id).eq('owner_id', userId)))
+      if (results.some(({ error }) => error)) setNotice('The layout reset here, but one or more positions could not be saved.')
+      else setNotice('Plate arrangement reset.')
+    } else setNotice('Plate arrangement reset.')
   }
 
   async function setItemStatus(item: PlateItem, status: PlateItem['status']) {
@@ -445,7 +489,7 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
 
       <main id="main" className="main-content">
         {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={15} /></button></div>}
-        {view === 'plate' && <PlateView name={profile.displayName} items={items} capacity={capacity} used={used} percent={percent} fullness={fullness} preferences={preferences} onCheckin={() => setModal('checkin')} onBrain={() => setModal('brain')} onAdd={() => setModal('add')} onRoom={() => setModal('room')} onFocus={() => setModal('focus')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onPass={(item) => { setSelectedItem(item); setModal('pass') }} onCalendarExport={(nextItems, label) => { setCalendarSelection({ items: nextItems, label }); setModal('calendar') }} onCalendarImport={(start, end, label) => { setCalendarRange({ start, end, label }); setModal('calendar-import') }} onComplete={(item) => void setItemStatus(item, 'complete')} onSide={(item) => void setItemStatus(item, 'side-plate')} onRestore={(item) => void setItemStatus(item, 'active')} />}
+        {view === 'plate' && <PlateView name={profile.displayName} items={items} capacity={capacity} used={used} percent={percent} fullness={fullness} preferences={preferences} onCheckin={() => setModal('checkin')} onBrain={() => setModal('brain')} onAdd={() => setModal('add')} onRoom={() => setModal('room')} onFocus={() => setModal('focus')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onMove={(item, position) => void movePlateItem(item, position)} onResetPositions={(visibleItems) => void resetPlatePositions(visibleItems)} onPass={(item) => { setSelectedItem(item); setModal('pass') }} onCalendarExport={(nextItems, label) => { setCalendarSelection({ items: nextItems, label }); setModal('calendar') }} onCalendarImport={(start, end, label) => { setCalendarRange({ start, end, label }); setModal('calendar-import') }} onComplete={(item) => void setItemStatus(item, 'complete')} onSide={(item) => void setItemStatus(item, 'side-plate')} onRestore={(item) => void setItemStatus(item, 'active')} />}
         {view === 'table' && <TableView isDemo={mode === 'demo'} profile={profile} circle={circle} circles={circles} members={members} onCircleChange={switchCircle} onInvite={() => setModal('invite')} onRequest={() => { const item = items.find((i) => i.status === 'active'); if (item) { setSelectedItem(item); setModal('pass') } else setModal('add') }} />}
         {view === 'requests' && <RequestsView requests={requests} members={members} userId={profile.id} onUpdate={respondToRequest} />}
         {view === 'insights' && <InsightsView isDemo={mode === 'demo'} items={items} history={checkinHistory} requests={requests} />}
@@ -466,6 +510,7 @@ export default function App({ supabaseConfig }: { supabaseConfig: SupabasePublic
       {modal === 'focus' && <FocusDisplay items={planningItems} capacity={capacity} onAdd={() => setModal('add')} onEdit={(item) => { setSelectedItem(item); setModal('edit') }} onComplete={(item) => void setItemStatus(item, 'complete')} onClose={() => setModal('none')} />}
       {modal === 'calendar' && <CalendarExportModal items={calendarSelection.items} label={calendarSelection.label} categoryLabels={preferences.categoryLabels} onClose={() => setModal('none')} />}
       {modal === 'calendar-import' && <CalendarImportModal mode={mode} token={calendarToken} range={calendarRange} existingEventIds={items.map((item) => item.calendarEventId).filter(Boolean) as string[]} ownerId={profile.id} categoryLabels={preferences.categoryLabels} onConnect={connectGoogleCalendar} onTokenExpired={clearCalendarToken} onImport={importCalendarItems} onClose={() => setModal('none')} />}
+      {modal === 'first-item-guide' && firstGuideItem && <FirstItemGuideModal item={firstGuideItem} onClose={finishFirstItemGuide} />}
     </div>
   )
 }
@@ -511,10 +556,64 @@ function NavButton({ active, icon, label, badge, onClick }: { active: boolean; i
   return <button className={`nav-button ${active ? 'active' : ''}`} onClick={onClick}>{icon}<span>{label}</span>{badge ? <b className="nav-badge">{badge}</b> : null}</button>
 }
 
-function PlateView({ name, items, capacity, used, percent, fullness, preferences, onCheckin, onBrain, onAdd, onRoom, onFocus, onEdit, onPass, onCalendarExport, onCalendarImport, onComplete, onSide, onRestore }: {
-  name: string; items: PlateItem[]; capacity: number; used: number; percent: number; fullness: { label: string; message: string }; preferences: PlatePreferences;
-  onCheckin: () => void; onBrain: () => void; onAdd: () => void; onRoom: () => void; onFocus: () => void; onEdit: (item: PlateItem) => void; onPass: (item: PlateItem) => void; onCalendarExport: (items: PlateItem[], label: string) => void; onCalendarImport: (start: string, end: string, label: string) => void; onComplete: (item: PlateItem) => void; onSide: (item: PlateItem) => void; onRestore: (item: PlateItem) => void
+const defaultPlatePositions = [
+  { x: 20, y: 18 }, { x: 78, y: 22 }, { x: 50, y: 48 },
+  { x: 19, y: 79 }, { x: 79, y: 79 }, { x: 51, y: 80 },
+]
+
+function DraggablePlateItem({ item, index, plateRef, onEdit, onMove }: {
+  item: PlateItem; index: number; plateRef: React.RefObject<HTMLDivElement | null>; onEdit: (item: PlateItem) => void; onMove: (item: PlateItem, position: { x: number; y: number }) => void
 }) {
+  const initial = item.platePosition ?? defaultPlatePositions[index % defaultPlatePositions.length]
+  const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null)
+  const position = dragPosition ?? initial
+  const [dragging, setDragging] = useState(false)
+  const movedRef = useRef(false)
+  const startRef = useRef({ x: 0, y: 0 })
+
+  function positionFromPointer(event: React.PointerEvent<HTMLButtonElement>) {
+    const plate = plateRef.current?.getBoundingClientRect()
+    if (!plate) return position
+    const radius = Math.min(plate.width, plate.height) / 2
+    const bubbleRadius = event.currentTarget.offsetWidth / 2
+    const available = Math.max(0, radius - bubbleRadius - 5)
+    let dx = event.clientX - (plate.left + plate.width / 2)
+    let dy = event.clientY - (plate.top + plate.height / 2)
+    const distance = Math.hypot(dx, dy)
+    if (distance > available && distance > 0) { const ratio = available / distance; dx *= ratio; dy *= ratio }
+    return { x: Math.round(((dx + plate.width / 2) / plate.width) * 1000) / 10, y: Math.round(((dy + plate.height / 2) / plate.height) * 1000) / 10 }
+  }
+
+  function moveWithKeyboard(dx: number, dy: number) {
+    let x = position.x + dx
+    let y = position.y + dy
+    const fromCenterX = x - 50
+    const fromCenterY = y - 50
+    const distance = Math.hypot(fromCenterX, fromCenterY)
+    if (distance > 40) { const ratio = 40 / distance; x = 50 + fromCenterX * ratio; y = 50 + fromCenterY * ratio }
+    const next = { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 }
+    onMove(item, next)
+  }
+
+  return <button
+    className={`plate-object ${dragging ? 'dragging' : ''}`}
+    style={{ '--object-size': `${Math.max(70, item.points * 3.4)}px`, '--object-color': categoryColor[item.category], left: `${position.x}%`, top: `${position.y}%` } as React.CSSProperties}
+    onPointerDown={(event) => { if (event.button !== 0) return; startRef.current = { x: event.clientX, y: event.clientY }; movedRef.current = false; setDragging(true); event.currentTarget.setPointerCapture(event.pointerId) }}
+    onPointerMove={(event) => { if (!dragging) return; if (Math.hypot(event.clientX - startRef.current.x, event.clientY - startRef.current.y) > 4) movedRef.current = true; setDragPosition(positionFromPointer(event)) }}
+    onPointerUp={(event) => { if (!dragging) return; const next = positionFromPointer(event); setDragging(false); setDragPosition(null); if (movedRef.current) onMove(item, next) }}
+    onPointerCancel={() => { setDragging(false); setDragPosition(null) }}
+    onClick={(event) => { if (movedRef.current) { event.preventDefault(); movedRef.current = false; return } onEdit(item) }}
+    onKeyDown={(event) => { const step = event.shiftKey ? 7 : 3; if (event.key === 'ArrowLeft') { event.preventDefault(); moveWithKeyboard(-step, 0) } if (event.key === 'ArrowRight') { event.preventDefault(); moveWithKeyboard(step, 0) } if (event.key === 'ArrowUp') { event.preventDefault(); moveWithKeyboard(0, -step) } if (event.key === 'ArrowDown') { event.preventDefault(); moveWithKeyboard(0, step) } }}
+    aria-label={`${item.title}, ${item.points} capacity points. Drag to arrange, use arrow keys to move, or press Enter to edit.`}
+    title="Drag to arrange · click to edit"
+  ><span className="item-emoji">{item.icon}</span><strong>{item.title}</strong><small>{item.points} pts</small><span>{item.loads.map(loadIcon).join(' ')}</span></button>
+}
+
+function PlateView({ name, items, capacity, used, percent, fullness, preferences, onCheckin, onBrain, onAdd, onRoom, onFocus, onEdit, onMove, onResetPositions, onPass, onCalendarExport, onCalendarImport, onComplete, onSide, onRestore }: {
+  name: string; items: PlateItem[]; capacity: number; used: number; percent: number; fullness: { label: string; message: string }; preferences: PlatePreferences;
+  onCheckin: () => void; onBrain: () => void; onAdd: () => void; onRoom: () => void; onFocus: () => void; onEdit: (item: PlateItem) => void; onMove: (item: PlateItem, position: { x: number; y: number }) => void; onResetPositions: (items: PlateItem[]) => void; onPass: (item: PlateItem) => void; onCalendarExport: (items: PlateItem[], label: string) => void; onCalendarImport: (start: string, end: string, label: string) => void; onComplete: (item: PlateItem) => void; onSide: (item: PlateItem) => void; onRestore: (item: PlateItem) => void
+}) {
+  const plateRef = useRef<HTMLDivElement>(null)
   const [weekOffset, setWeekOffset] = useState(0)
   const [category, setCategory] = useState<'all' | PlateItem['category']>('all')
   const [query, setQuery] = useState('')
@@ -568,11 +667,11 @@ function PlateView({ name, items, capacity, used, percent, fullness, preferences
     </nav>
     <section className="dashboard-grid">
       <article className="plate-card">
-        <div className="section-title"><div><p className="eyebrow">YOUR PRIVATE PLATE</p><h2>What you’re carrying</h2></div><span className="legend-dot">Size shows capacity</span></div>
+        <div className="section-title"><div><p className="eyebrow">YOUR PRIVATE PLATE</p><h2>What you’re carrying</h2></div><div className="plate-layout-tools"><span className="legend-dot">Drag to arrange · size shows capacity</span>{active.some((item) => item.platePosition) && <button className="reset-layout-button" onClick={() => onResetPositions(active)}><RefreshCcw size={13} /> Reset</button>}</div></div>
         <div className="plate-wrap">
           <div className="plate-rim" aria-label={`${active.length} active commitments on your plate`}>
-            <div className="plate-center">
-              {active.map((item, index) => <button key={item.id} className={`plate-object object-${index % 6}`} style={{ '--object-size': `${Math.max(70, item.points * 3.4)}px`, '--object-color': categoryColor[item.category] } as React.CSSProperties} onClick={() => onEdit(item)} aria-label={`Edit ${item.title}, ${item.points} capacity points`}><span className="item-emoji">{item.icon}</span><strong>{item.title}</strong><small>{item.points} pts</small><span>{item.loads.map(loadIcon).join(' ')}</span></button>)}
+            <div className="plate-center" ref={plateRef}>
+              {active.map((item, index) => <DraggablePlateItem key={item.id} item={item} index={index} plateRef={plateRef} onEdit={onEdit} onMove={onMove} />)}
               {active.length === 0 && <div className="empty-plate"><Sparkles /><b>Your plate is ready.</b><span>Add what you’re carrying—big, small, visible, or invisible.</span><button className="primary-button" onClick={onAdd}><Plus size={17} /> Add your first commitment</button></div>}
             </div>
           </div>
@@ -659,6 +758,33 @@ function Modal({ children, title, onClose, wide = false }: { children: React.Rea
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
   }
   return <div className="modal-backdrop" role="presentation" onKeyDown={handleKeys} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}><section ref={dialogRef} tabIndex={-1} className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Close"><X /></button>{children}</section></div>
+}
+
+function FirstItemGuideModal({ item, onClose }: { item: PlateItem; onClose: () => void }) {
+  return <Modal title="Your first commitment is on the plate" onClose={onClose} wide>
+    <div className="first-item-guide">
+      <p className="eyebrow">YOUR FIRST COMMITMENT IS ON THE PLATE</p>
+      <h2>You can make room—or ask for a hand.</h2>
+      <p className="modal-intro"><strong>“{item.title}”</strong> is now on your private plate. When life changes, the two controls beside a commitment help your plan change with it.</p>
+      <div className="guide-choice-grid">
+        <article className="guide-choice-card">
+          <span className="guide-icon"><Clock3 aria-hidden="true" /></span>
+          <p className="eyebrow">SIDE PLATE</p>
+          <h3>Make room without letting go.</h3>
+          <p>Move something here when it still matters, but not right now. It stops counting toward your active load, and you can return it whenever you are ready.</p>
+        </article>
+        <article className="guide-choice-card">
+          <span className="guide-icon"><HandHeart aria-hidden="true" /></span>
+          <p className="eyebrow">PASS THE PLATE</p>
+          <h3>Ask someone you trust for a hand.</h3>
+          <p>Ask them to take it, share it, do it together, help you start, remind you, or listen. Your private plate and notes stay private.</p>
+        </article>
+      </div>
+      <div className="guide-privacy"><ShieldCheck aria-hidden="true" /><span><strong>They only see what you approve.</strong> Passing creates a separate support request—not a view of your plate.</span></div>
+      <p className="guide-control-note">Look for the clock and helping-hand icons beside every commitment.</p>
+      <div className="modal-footer end"><button className="secondary-button" onClick={onClose}>Skip for now</button><button className="primary-button" onClick={onClose}>Got it—show my plate <ArrowRight size={17} /></button></div>
+    </div>
+  </Modal>
 }
 
 function SetupModal({ profile, checkin, onSave }: { profile: Profile; checkin: CapacityCheckin; onSave: (profile: Profile, checkin: CapacityCheckin) => void }) {

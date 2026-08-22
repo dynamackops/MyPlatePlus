@@ -34,6 +34,7 @@ export interface PlateItem {
   icon?: string
   steps?: string[]
   calendarEventId?: string
+  platePosition?: { x: number; y: number }
   ownerId: string
 }
 
